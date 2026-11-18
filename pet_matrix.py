@@ -69,16 +69,21 @@ class PetMatrix:
             except Exception as e:
                 logger.error("Bridge RPC call 'draw' failed: %s", e)
 
-    def set_mood(self, mood: str, duration: float = 0.0) -> None:
+    def set_mood(self, mood: str, duration: float = 0.0, force: bool = False) -> None:
         """Set the pet mood/emotion.
         
         If duration > 0, reverts to 'idle' after duration seconds.
+        Routine states (speaking, thinking, listening, idle) will not overwrite
+        an active temporary emotion unless force=True.
         """
         mood = mood.lower()
+        now = time.time()
         with self._lock:
+            if not force and self._temp_mood_until > now and mood in ("speaking", "thinking", "listening", "idle"):
+                return
             self.mood = mood
             if duration > 0:
-                self._temp_mood_until = time.time() + duration
+                self._temp_mood_until = now + duration
             else:
                 self._temp_mood_until = 0.0
         logger.info("Pet mood changed to: %s (duration=%s)", mood, duration)

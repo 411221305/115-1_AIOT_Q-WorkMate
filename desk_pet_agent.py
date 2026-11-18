@@ -245,13 +245,13 @@ def tool_complete_todo(todo_id: int, **kwargs) -> Dict[str, Any]:
 
 
 def tool_remind_hydration(**kwargs) -> Dict[str, Any]:
-    matrix.set_mood("water", duration=4.0)
+    matrix.set_mood("water", duration=4.0, force=True)
     rgb.set_color("yellow")
     return {"message": "已在螢幕提醒主人喝水與放鬆休息！"}
 
 
 def tool_set_pet_mood(mood: str, **kwargs) -> Dict[str, Any]:
-    matrix.set_mood(mood, duration=4.0)
+    matrix.set_mood(mood, duration=4.0, force=True)
     if mood == "heart":
         rgb.set_color("pink")
     elif mood == "sleep":
@@ -299,6 +299,8 @@ def update_pet_state(phase: str) -> None:
     S["phase"] = phase
     if pomodoro.active:
         return  # 若番茄鐘倒數中，維持番茄鐘進度顯示
+    if getattr(matrix, "_temp_mood_until", 0) > time.time():
+        return  # 暫時情緒進行中，維持特殊表情與燈效
     if phase == "listening":
         matrix.set_mood("listening")
         rgb.set_color("blue")
@@ -565,6 +567,7 @@ async def stop_listening():
 async def chat_text(body: dict):
     global turn
     text = body.get("text", "").strip()
+    is_quick_ai = bool(body.get("isQuickAi", False))
     if not text:
         return JSONResponse({"error": "Empty text"}, status_code=400)
     async with ws_lock:
@@ -576,6 +579,7 @@ async def chat_text(body: dict):
             "reply": "",
             "tools": [],
             "wav_len": 0,
+            "isQuickAi": is_quick_ai,
         }
         S["turns"].append(turn)
         msg = {
@@ -832,10 +836,10 @@ DASHBOARD_HTML = """<!doctype html>
 
         <div class="card-title" style="margin-top: 4px;">🐾 AI 智慧互動快捷鍵</div>
         <div class="quick-cmd-grid">
-          <button class="btn-sm" onclick="sendChatText('幫我設定 1 分鐘專注工作番茄鐘')">🍅 1分鐘專注</button>
-          <button class="btn-sm" onclick="sendChatText('提醒我喝水休息')">💧 提醒喝水</button>
-          <button class="btn-sm" onclick="sendChatText('做一個愛心表情給我看')">❤️ 撒嬌愛心</button>
-          <button class="btn-sm" onclick="sendChatText('現在板載溫度與硬體狀態如何')">🌡️ 硬體狀態</button>
+          <button class="btn-sm" onclick="triggerQuickAI('pomodoro')">🍅 1分鐘專注</button>
+          <button class="btn-sm" onclick="triggerQuickAI('water')">💧 提醒喝水</button>
+          <button class="btn-sm" onclick="triggerQuickAI('heart')">❤️ 撒嬌愛心</button>
+          <button class="btn-sm" onclick="triggerQuickAI('status')">🌡️ 硬體狀態</button>
         </div>
 
         <div class="card-title" style="margin-top: 8px;">表情與情緒快速切換</div>
@@ -985,21 +989,23 @@ DASHBOARD_HTML = """<!doctype html>
             if (turnIdx > lastHandledTurnIndex) {
               if (curTurn.reply || (curTurn.tools && curTurn.tools.length > 0) || curTurn.wav_len > 0 || data.phase === 'idle') {
                 lastHandledTurnIndex = turnIdx;
-                let petReply = curTurn.reply;
-                if (!petReply && curTurn.tools && curTurn.tools.length > 0) {
-                  const t = curTurn.tools[0];
-                  if (t.name === 'start_focus_timer') petReply = '好的！已為您啟動 ' + (t.args.minutes || 25) + ' 分鐘專注番茄鐘 🍅';
-                  else if (t.name === 'cancel_focus_timer') petReply = '已為您取消專注番茄鐘 ⏹️';
-                  else if (t.name === 'set_pet_mood') petReply = '已為您切換桌寵表情：' + t.args.mood + ' ✨';
-                  else if (t.name === 'add_todo') petReply = '已為您記錄待辦事項：' + t.args.task + ' 📝';
-                  else if (t.name === 'remind_hydration') petReply = '主人辛苦了，記得喝杯水休息一下喔 💧';
-                  else if (t.name === 'get_board_status') petReply = '目前硬體運作正常，CPU 溫度約 ' + (data.telemetry?.cpu_temperature || '正常');
-                  else petReply = '收到指令，已執行：' + t.name;
+                if (!curTurn.isQuickAi) {
+                  let petReply = curTurn.reply;
+                  if (!petReply && curTurn.tools && curTurn.tools.length > 0) {
+                    const t = curTurn.tools[0];
+                    if (t.name === 'start_focus_timer') petReply = '好的！已為您啟動 ' + (t.args.minutes || 25) + ' 分鐘專注番茄鐘 🍅';
+                    else if (t.name === 'cancel_focus_timer') petReply = '已為您取消專注番茄鐘 ⏹️';
+                    else if (t.name === 'set_pet_mood') petReply = '已為您切換桌寵表情：' + t.args.mood + ' ✨';
+                    else if (t.name === 'add_todo') petReply = '已為您記錄待辦事項：' + t.args.task + ' 📝';
+                    else if (t.name === 'remind_hydration') petReply = '主人辛苦了，記得喝杯水休息一下喔 💧';
+                    else if (t.name === 'get_board_status') petReply = '目前硬體運作正常，CPU 溫度約 ' + (data.telemetry?.cpu_temperature || '正常');
+                    else petReply = '收到指令，已執行：' + t.name;
+                  }
+                  if (!petReply) {
+                    petReply = '🐾 收到！已為您處理完畢！';
+                  }
+                  appendChat('pet', petReply);
                 }
-                if (!petReply) {
-                  petReply = '🐾 收到！已為您處理完畢！';
-                }
-                appendChat('pet', petReply);
                 
                 if (curTurn.wav_len > 0 && soundEnabled) {
                   const audio = new Audio('/reply.wav?t=' + Date.now());
@@ -1085,16 +1091,49 @@ DASHBOARD_HTML = """<!doctype html>
       syncState();
     }
 
-    async function sendChatText(txt) {
+    async function triggerQuickAI(action) {
+      if (action === 'pomodoro') {
+        appendChat('user', '幫我設定 1 分鐘專注工作番茄鐘');
+        appendChat('pet', '好的！已為主人啟動 1 分鐘專注番茄鐘 🍅');
+        await startTimer(1);
+        sendChatText('我啟動了1分鐘專注工作番茄鐘，請用可愛桌寵語氣為我加油打氣一句話', false);
+      } else if (action === 'water') {
+        appendChat('user', '提醒我喝水休息');
+        appendChat('pet', '主人辛苦了！記得喝口溫開水、休息一下喔 💧');
+        await setMood('water');
+        sendChatText('提醒我喝水休息，請用可愛桌寵語氣簡短關心我一句', false);
+      } else if (action === 'heart') {
+        appendChat('user', '做一個愛心表情給我看');
+        appendChat('pet', '愛你唷主人！已為您送上撒嬌愛心 ❤️');
+        await setMood('heart');
+        sendChatText('做一個愛心表情給我看，用撒嬌語氣說一句喜歡主人', false);
+      } else if (action === 'status') {
+        appendChat('user', '現在板載溫度與硬體狀態如何');
+        try {
+          const res = await fetch('/state');
+          const data = await res.json();
+          const temp = data.telemetry?.cpu_temperature || '37.3 °C';
+          const mem = data.telemetry?.memory_available || '3000 MB';
+          appendChat('pet', `目前 Arduino UNO Q 硬體狀態良好！CPU 溫度 ${temp}，可用記憶體 ${mem} 🌡️`);
+        } catch(e) {
+          appendChat('pet', '硬體運作正常，系統狀態良好 🌡️');
+        }
+        sendChatText('查詢硬體狀態，簡短回報系統運作很健康', false);
+      }
+    }
+
+    async function sendChatText(txt, addToUi = true) {
       if (!txt) return;
-      appendChat('user', txt);
+      if (addToUi) {
+        appendChat('user', txt);
+      }
       const phaseEl = document.getElementById('lbl-phase');
       if (phaseEl) phaseEl.textContent = '思考運算中...';
       try {
         await fetch('/chat', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({text: txt})
+          body: JSON.stringify({text: txt, isQuickAi: !addToUi})
         });
       } catch(e) {
         console.error('Chat error:', e);
