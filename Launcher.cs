@@ -45,13 +45,20 @@ namespace QWorkMateLauncher
             Console.WriteLine("✓ Arduino UNO Q 已連線！\n");
             Console.ResetColor();
 
-            // 2. Start Board Docker container
+            // 2. Start Board Docker containers (smile-matrix bridge + qpet agent)
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("[2/4] 啟動板端 Q-Pet Agent 與 AI 服務 (Docker)...");
+            Console.WriteLine("[2/4] 啟動板端點陣硬體橋接與 Q-Pet Agent (Docker)...");
             Console.ResetColor();
-            RunCommand(adbPath, "shell \"docker start qpet\"");
+
+            string startRes = RunCommand(adbPath, "shell \"docker start smile-matrix-main-1 qpet 2>&1\"");
+            if (startRes.Contains("No such container") || startRes.Contains("Error"))
+            {
+                Console.WriteLine("板端點陣韌體準備中，正在載入點陣驅動 (初次開機需約 10 秒)...");
+                RunCommand(adbPath, "shell \"arduino-app-cli app start user:smile-matrix && docker start qpet\"");
+            }
+
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("✓ 板端 Q-Pet 服務已啟動運行！\n");
+            Console.WriteLine("✓ 板端硬體與 Q-Pet 服務已啟動運行！\n");
             Console.ResetColor();
 
             // 3. Start proxy

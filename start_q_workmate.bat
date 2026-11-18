@@ -20,9 +20,9 @@ if %errorlevel% neq 0 (
 echo [V] Arduino UNO Q 已連線！
 echo.
 
-echo [2/4] 啟動板端 AI 桌寵核心容器 (Docker)...
-%ADB% shell "docker start qpet" >nul 2>&1
-echo [V] 板端 Q-Pet Agent 已啟動！
+echo [2/4] 啟動板端點陣硬體橋接與 AI 桌寵容器 (Docker)...
+%ADB% shell "docker start smile-matrix-main-1 qpet" >nul 2>&1
+echo [V] 板端點陣硬體與 Q-Pet Agent 已啟動！
 echo.
 
 echo [3/4] 啟動 Windows 連線代理服務 (Port 7790)...
