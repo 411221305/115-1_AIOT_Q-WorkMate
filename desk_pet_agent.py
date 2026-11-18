@@ -404,6 +404,23 @@ async def rx_loop() -> None:
                         result = {"error": str(err)}
                     if turn:
                         turn["tools"].append({"name": name, "args": args, "result": result})
+                        if name == "start_focus_timer":
+                            turn["reply"] = f"好的！已為主人設定 {args.get('minutes', 25)} 分鐘專注番茄鐘 🍅"
+                        elif name == "cancel_focus_timer":
+                            turn["reply"] = "專注番茄鐘已為您取消 ⏹️"
+                        elif name == "set_pet_mood":
+                            turn["reply"] = f"已為您切換桌寵表情：{args.get('mood')} ✨"
+                        elif name == "add_todo":
+                            turn["reply"] = f"已為您記錄待辦事項：「{args.get('task')}」📝"
+                        elif name == "list_todos":
+                            turn["reply"] = "目前待辦清單已同步更新在右方 📋"
+                        elif name == "remind_hydration":
+                            turn["reply"] = "主人辛苦了！記得喝口溫開水、休息一下喔 💧"
+                        elif name == "get_board_status":
+                            t = tool_get_board_status()
+                            turn["reply"] = f"板載硬體狀態良好，CPU 溫度 {t.get('cpu_temperature')}，可用記憶體 {t.get('memory_available')} 🌡️"
+                        elif name == "get_time":
+                            turn["reply"] = f"現在時間是 {time.strftime('%H:%M:%S')} ⏰"
                     replies.append({"id": fc.get("id"), "name": name, "response": result})
 
                 resp_payload = {"toolResponse": {"functionResponses": replies}}
@@ -451,6 +468,9 @@ async def rx_loop() -> None:
                     if turn:
                         turn["wav_len"] = len(last_wav)
                     audio_buf.clear()
+
+                if turn and not turn.get("reply"):
+                    turn["reply"] = "🐾 收到！已為您處理完畢！"
 
                 update_pet_state("idle")
                 logger.info("Turn completed.")
@@ -893,6 +913,8 @@ DASHBOARD_HTML = """<!doctype html>
 
     // 狀態輪詢與鏡像同步
     let lastWavLen = 0;
+    let lastHandledTurnIndex = -1;
+    let initialSyncDone = false;
     async function syncState() {
       try {
         const res = await fetch('/state');
@@ -915,11 +937,6 @@ DASHBOARD_HTML = """<!doctype html>
           phaseEl.textContent = '⚠️ ' + (data.msg || '連線錯誤 (請檢查金鑰)');
           dotEl.style.background = 'var(--danger)';
           dotEl.style.boxShadow = '0 0 10px var(--danger)';
-          if (isRecording) {
-            isRecording = false;
-            btnTalk.classList.remove('active');
-            document.getElementById('btn-text').textContent = '按住說話 (或按住空白鍵)';
-          }
         } else {
           phaseEl.textContent = data.phase === 'listening' ? '正在傾聽...' : data.phase === 'thinking' ? '思考運算中...' : data.phase === 'speaking' ? '正在回答' : '待命';
           dotEl.style.background = 'var(--success)';
@@ -957,28 +974,38 @@ DASHBOARD_HTML = """<!doctype html>
           renderTodos(data.todos);
         }
 
-        // 檢查語音回覆音訊播放 (Web 模式) 與對話紀錄
+        // 檢查語音回覆音訊播放 (Web 模式) 與對話紀錄同步
         if (data.turns && data.turns.length > 0) {
-          const lastTurn = data.turns[data.turns.length - 1];
-          if (lastTurn.wav_len && lastTurn.wav_len !== lastWavLen) {
-            lastWavLen = lastTurn.wav_len;
-            if (data.out_mode === 'web' && soundEnabled) {
-              const audio = new Audio('/reply.wav?t=' + Date.now());
-              audio.play().catch(e => console.log('Audio playback info:', e));
-            }
-            let petReply = lastTurn.reply;
-            if (!petReply && lastTurn.tools && lastTurn.tools.length > 0) {
-              const t = lastTurn.tools[0];
-              if (t.name === 'start_focus_timer') petReply = '好的！已為您啟動 ' + (t.args.minutes || 25) + ' 分鐘專注番茄鐘 🍅';
-              else if (t.name === 'cancel_focus_timer') petReply = '已為您取消專注番茄鐘 ⏹️';
-              else if (t.name === 'set_pet_mood') petReply = '已為您切換桌寵表情：' + t.args.mood + ' ✨';
-              else if (t.name === 'add_todo') petReply = '已為您記錄待辦事項：' + t.args.task + ' 📝';
-              else if (t.name === 'remind_hydration') petReply = '主人辛苦了，記得喝杯水休息一下喔 💧';
-              else if (t.name === 'get_board_status') petReply = '目前硬體運作正常，CPU 溫度約 ' + (data.telemetry?.cpu_temperature || '正常');
-              else petReply = '收到指令，已執行：' + t.name;
-            }
-            if (petReply) {
-              appendChat('pet', petReply);
+          if (!initialSyncDone) {
+            initialSyncDone = true;
+            lastHandledTurnIndex = data.turns.length - 1;
+          } else {
+            const turnIdx = data.turns.length - 1;
+            const curTurn = data.turns[turnIdx];
+            if (turnIdx > lastHandledTurnIndex) {
+              if (curTurn.reply || (curTurn.tools && curTurn.tools.length > 0) || curTurn.wav_len > 0 || data.phase === 'idle') {
+                lastHandledTurnIndex = turnIdx;
+                let petReply = curTurn.reply;
+                if (!petReply && curTurn.tools && curTurn.tools.length > 0) {
+                  const t = curTurn.tools[0];
+                  if (t.name === 'start_focus_timer') petReply = '好的！已為您啟動 ' + (t.args.minutes || 25) + ' 分鐘專注番茄鐘 🍅';
+                  else if (t.name === 'cancel_focus_timer') petReply = '已為您取消專注番茄鐘 ⏹️';
+                  else if (t.name === 'set_pet_mood') petReply = '已為您切換桌寵表情：' + t.args.mood + ' ✨';
+                  else if (t.name === 'add_todo') petReply = '已為您記錄待辦事項：' + t.args.task + ' 📝';
+                  else if (t.name === 'remind_hydration') petReply = '主人辛苦了，記得喝杯水休息一下喔 💧';
+                  else if (t.name === 'get_board_status') petReply = '目前硬體運作正常，CPU 溫度約 ' + (data.telemetry?.cpu_temperature || '正常');
+                  else petReply = '收到指令，已執行：' + t.name;
+                }
+                if (!petReply) {
+                  petReply = '🐾 收到！已為您處理完畢！';
+                }
+                appendChat('pet', petReply);
+                
+                if (curTurn.wav_len > 0 && soundEnabled) {
+                  const audio = new Audio('/reply.wav?t=' + Date.now());
+                  audio.play().catch(e => console.log('Audio playback info:', e));
+                }
+              }
             }
           }
         }
