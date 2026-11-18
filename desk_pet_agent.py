@@ -796,6 +796,21 @@ DASHBOARD_HTML = """<!doctype html>
           <div class="matrix-grid" id="matrix-grid"></div>
         </div>
 
+        <!-- 麥克風狀態提示與音量條 -->
+        <div id="mic-status-bar" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+            <span id="mic-status-text" style="color:var(--text-muted);">🎙️ 麥克風未授權</span>
+            <button class="btn-sm" id="btn-request-mic" style="flex:0 0 auto;padding:4px 10px;font-size:11px;" onclick="requestMicPermission()">授權麥克風</button>
+          </div>
+          <div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;">
+            <div id="mic-level-bar" style="height:100%;width:0%;background:var(--success);transition:width 0.05s ease;"></div>
+          </div>
+          <div id="mic-warning-box" style="display:none;background:rgba(245,158,11,0.15);border:1px solid #f59e0b;padding:8px 12px;border-radius:10px;font-size:12px;color:#fde68a;">
+            ⚠️ <b>請改用 localhost 開啟</b>：瀏覽器安全性限制只有 <code>localhost</code> 才能使用麥克風。<br>
+            👉 <a href="http://localhost:7790" style="color:#38bdf8;font-weight:bold;text-decoration:underline;">點我前往 http://localhost:7790</a>
+          </div>
+        </div>
+
         <button class="btn-talk" id="btn-talk">
           <span id="btn-icon">🎙️</span>
           <span id="btn-text">按住說話 (或按住空白鍵)</span>
@@ -1054,8 +1069,35 @@ DASHBOARD_HTML = """<!doctype html>
     let audioCtx = null, micSock = null, micProcessor = null, micStream = null;
     let isRecording = false;
 
+    function checkMicSupport() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        document.getElementById('mic-warning-box').style.display = 'block';
+        document.getElementById('mic-status-text').textContent = '⚠️ 請使用 localhost 開啟';
+        document.getElementById('btn-request-mic').style.display = 'none';
+        return false;
+      }
+      return true;
+    }
+    setTimeout(checkMicSupport, 100);
+
+    async function requestMicPermission() {
+      if (!checkMicSupport()) return;
+      try {
+        await initMic();
+        document.getElementById('mic-status-text').innerHTML = '🟢 麥克風已就緒 (有音量反應)';
+        document.getElementById('mic-status-text').style.color = 'var(--success)';
+        document.getElementById('btn-request-mic').style.display = 'none';
+      } catch (err) {
+        document.getElementById('mic-status-text').textContent = '❌ 授權失敗: ' + (err.name || err.message);
+        document.getElementById('mic-status-text').style.color = 'var(--danger)';
+      }
+    }
+
     async function initMic() {
-      if (micSock && micSock.readyState === WebSocket.OPEN) return;
+      if (micStream && micStream.active && micSock && micSock.readyState === WebSocket.OPEN) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("此網址不支援麥克風，請開 http://localhost:7790");
+      }
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       micSock = new WebSocket(`${proto}//${location.host}/mic`);
       micStream = await navigator.mediaDevices.getUserMedia({audio: {sampleRate: 16000, channelCount: 1, echoCancellation: true}});
@@ -1064,8 +1106,15 @@ DASHBOARD_HTML = """<!doctype html>
       micProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
       
       micProcessor.onaudioprocess = (e) => {
-        if (!isRecording || micSock.readyState !== WebSocket.OPEN) return;
         const input = e.inputBuffer.getChannelData(0);
+        let sum = 0;
+        for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+        let rms = Math.sqrt(sum / input.length);
+        let lvl = Math.min(100, Math.round(rms * 350));
+        const bar = document.getElementById('mic-level-bar');
+        if (bar) bar.style.width = lvl + '%';
+
+        if (!isRecording || !micSock || micSock.readyState !== WebSocket.OPEN) return;
         const pcm16 = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {
           let s = Math.max(-1, Math.min(1, input[i]));
@@ -1080,10 +1129,22 @@ DASHBOARD_HTML = """<!doctype html>
     const btnTalk = document.getElementById('btn-talk');
     async function startTalk() {
       if (isRecording) return;
+      if (!checkMicSupport()) {
+        alert("瀏覽器安全性限制：非 localhost 網址無法啟用麥克風。\n👉 請改在網址列開啟 http://localhost:7790 即可！");
+        return;
+      }
+      try {
+        await initMic();
+        document.getElementById('mic-status-text').innerHTML = '🟢 麥克風已就緒';
+        document.getElementById('mic-status-text').style.color = 'var(--success)';
+        document.getElementById('btn-request-mic').style.display = 'none';
+      } catch(e) {
+        alert("無法啟動麥克風: " + (e.name || e.message) + "\n請在網址列左側點擊圖示，將麥克風設為『允許』！");
+        return;
+      }
       isRecording = true;
       btnTalk.classList.add('active');
       document.getElementById('btn-text').textContent = '正在聆聽中... (放開按鈕回答)';
-      try { await initMic(); } catch(e){}
       await fetch('/start', {method: 'POST'});
     }
 
