@@ -28,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from matrix_frames import FRAME_SIZE
 from pet_matrix import PetMatrix
-from productivity import PomodoroTimer, TodoManager
+from productivity import PomodoroTimer, TodoManager, ScheduleManager
 from rgb_led import RgbLedController
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -85,6 +85,7 @@ def on_pomodoro_complete(label: str) -> None:
 
 
 pomodoro = PomodoroTimer(on_tick=on_pomodoro_tick, on_complete=on_pomodoro_complete)
+schedule = ScheduleManager(timer=pomodoro)
 
 # ---------------------------------------------------------------- Gemini 工具定義與實作
 PERSONA = (
@@ -92,14 +93,60 @@ PERSONA = (
     "你的對象是正在用電腦讀書、寫程式或工作的同學。"
     "你性格活潑、親切、熱愛工作陪伴，一律用繁體中文（台灣口語習慣）回答，說話簡短精煉（最多兩到三句）。"
     "你擁有強大的硬體與生產力工具，能主動替主人管理生活與專注：\n"
-    "1. 當同學要求專注工作、讀書或設定番茄鐘時，呼叫 start_focus_timer；要求休息、小憩或護眼放鬆時呼叫 start_break_timer；要求看剩餘時間呼叫 get_timer_status；取消叫 cancel_focus_timer。\n"
-    "2. 當同學想記事情或待辦清單，呼叫 add_todo；想查今天要做什麼呼叫 list_todos；完成叫 complete_todo。\n"
-    "3. 當同學工作很久、喊累或口渴，呼叫 remind_hydration 給予溫馨提醒與關懷。\n"
-    "4. 當同學誇獎你或想看你撒嬌，呼叫 set_pet_mood 變成 heart（愛心）或 coffee（咖啡）。\n"
-    "5. 問到板子溫度、負載或系統狀態，呼叫 get_board_status；問現在時間呼叫 get_time。"
+    "1. 當同學要求規劃時程表或多段專注/休息（例如『先專注25分再休息5分』）時，呼叫 set_schedule；要求追加時程呼叫 add_schedule_block；開始執行呼叫 start_schedule；清空叫 clear_schedule。\n"
+    "2. 當同學要求單次專注工作、讀書或設定番茄鐘時，呼叫 start_focus_timer；要求休息、小憩或護眼放鬆時呼叫 start_break_timer；要求看剩餘時間呼叫 get_timer_status；取消叫 cancel_focus_timer。\n"
+    "3. 當同學想記事情或待辦清單，呼叫 add_todo；想查今天要做什麼呼叫 list_todos；完成叫 complete_todo。\n"
+    "4. 當同學工作很久、喊累或口渴，呼叫 remind_hydration 給予溫馨提醒與關懷。\n"
+    "5. 當同學誇獎你或想看你撒嬌，呼叫 set_pet_mood 變成 heart（愛心）或 coffee（咖啡）。\n"
+    "6. 問到板子溫度、負載或系統狀態，呼叫 get_board_status；問現在時間呼叫 get_time。"
 )
 
 TOOLS = [{"functionDeclarations": [
+    {
+        "name": "set_schedule",
+        "description": "規劃專注與小憩時程表（時間線）。可一次解析並安排多個專注與休息區塊，例如：『先專注25分鐘寫作業，再休息5分鐘，接著專注25分鐘』。",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "blocks": {
+                    "type": "ARRAY",
+                    "description": "時程區塊清單",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "type": {"type": "STRING", "description": "'focus' (專注) 或 'break' (小憩)"},
+                            "duration": {"type": "NUMBER", "description": "時間長度（分鐘）"},
+                            "label": {"type": "STRING", "description": "區塊標題說明，例如『寫作業』、『護眼伸展』"}
+                        },
+                        "required": ["type", "duration", "label"]
+                    }
+                },
+                "auto_start": {"type": "BOOLEAN", "description": "是否立即開始執行第一個時程區塊（預設 True）"}
+            },
+            "required": ["blocks"]
+        }
+    },
+    {
+        "name": "add_schedule_block",
+        "description": "在時程表尾端追加一個新的專注或休息區塊。",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "type": {"type": "STRING", "description": "'focus' 或 'break'"},
+                "duration": {"type": "NUMBER", "description": "分鐘數"},
+                "label": {"type": "STRING", "description": "標題"}
+            },
+            "required": ["type", "duration", "label"]
+        }
+    },
+    {
+        "name": "start_schedule",
+        "description": "開始依序執行專注與休息時程表。",
+    },
+    {
+        "name": "clear_schedule",
+        "description": "清空目前的專注時程表。",
+    },
     {
         "name": "start_focus_timer",
         "description": "啟動專注番茄鐘倒數計時。板載點陣會即時顯示進度格條。",
@@ -288,9 +335,33 @@ def tool_set_pet_mood(mood: str, **kwargs) -> Dict[str, Any]:
     return {"status": "success", "mood": mood}
 
 
+def tool_set_schedule(blocks: list, auto_start: bool = True, **kwargs) -> Dict[str, Any]:
+    res = schedule.set_blocks(blocks, auto_start=auto_start)
+    return {"status": "schedule_set", "count": len(res), "blocks": res}
+
+
+def tool_add_schedule_block(type: str = "focus", duration: float = 25.0, label: str = "專注工作", **kwargs) -> Dict[str, Any]:
+    b = schedule.add_block(type, duration, label)
+    return {"status": "block_added", "block": b}
+
+
+def tool_start_schedule(**kwargs) -> Dict[str, Any]:
+    cur = schedule.start_index(0)
+    return {"status": "schedule_started", "current": cur}
+
+
+def tool_clear_schedule(**kwargs) -> Dict[str, Any]:
+    schedule.clear()
+    return {"status": "schedule_cleared"}
+
+
 TOOL_FUNCS = {
     "get_board_status": tool_get_board_status,
     "get_time": tool_get_time,
+    "set_schedule": tool_set_schedule,
+    "add_schedule_block": tool_add_schedule_block,
+    "start_schedule": tool_start_schedule,
+    "clear_schedule": tool_clear_schedule,
     "start_focus_timer": tool_start_focus_timer,
     "start_break_timer": tool_start_break_timer,
     "get_timer_status": tool_get_timer_status,
@@ -434,7 +505,15 @@ async def rx_loop() -> None:
                         result = {"error": str(err)}
                     if turn:
                         turn["tools"].append({"name": name, "args": args, "result": result})
-                        if name == "start_focus_timer":
+                        if name == "set_schedule":
+                            turn["reply"] = f"已為主人規劃好 {len(args.get('blocks', []))} 個階段的專注與小憩時程表 📅 按步就班進行囉！"
+                        elif name == "add_schedule_block":
+                            turn["reply"] = f"已在時程表追加：「{args.get('label')}」({args.get('duration')}分鐘) ➕"
+                        elif name == "start_schedule":
+                            turn["reply"] = "專注時程表已啟動！讓我們全神貫注吧 🚀"
+                        elif name == "clear_schedule":
+                            turn["reply"] = "已為您清空專注時程表 ⏹️"
+                        elif name == "start_focus_timer":
                             turn["reply"] = f"好的！已為主人設定 {args.get('minutes', 25)} 分鐘專注番茄鐘 🍅"
                         elif name == "start_break_timer":
                             turn["reply"] = f"辛苦了主人！已為您開啟 {args.get('minutes', 5)} 分鐘小憩放鬆 ☕ 記得活動筋骨、遠眺放鬆喔！"
@@ -661,10 +740,58 @@ async def get_state():
     out = dict(S)
     out["matrix"] = matrix.get_current_frame()
     out["pomodoro"] = pomodoro.get_status()
+    out["schedule"] = schedule.get_status()
     out["todos"] = todos.list_all()
     out["mood"] = matrix.mood
     out["telemetry"] = tool_get_board_status()
     return JSONResponse(out)
+
+
+@app.get("/api/schedule")
+async def api_get_schedule():
+    return JSONResponse(schedule.get_status())
+
+
+@app.post("/api/schedule/set")
+async def api_schedule_set(body: dict):
+    blocks = body.get("blocks", [])
+    auto_start = bool(body.get("auto_start", True))
+    schedule.set_blocks(blocks, auto_start=auto_start)
+    return JSONResponse(schedule.get_status())
+
+
+@app.post("/api/schedule/add")
+async def api_schedule_add(body: dict):
+    b_type = body.get("type", "focus")
+    duration = float(body.get("duration", 25))
+    label = body.get("label", "專注工作")
+    schedule.add_block(b_type, duration, label)
+    return JSONResponse(schedule.get_status())
+
+
+@app.post("/api/schedule/start")
+async def api_schedule_start(body: dict = None):
+    idx = int(body.get("index", 0)) if body else 0
+    schedule.start_index(idx)
+    return JSONResponse(schedule.get_status())
+
+
+@app.post("/api/schedule/next")
+async def api_schedule_next():
+    schedule.next_block()
+    return JSONResponse(schedule.get_status())
+
+
+@app.post("/api/schedule/stop")
+async def api_schedule_stop():
+    schedule.stop()
+    return JSONResponse(schedule.get_status())
+
+
+@app.post("/api/schedule/clear")
+async def api_schedule_clear():
+    schedule.clear()
+    return JSONResponse(schedule.get_status())
 
 
 @app.get("/reply.wav")
@@ -842,6 +969,14 @@ DASHBOARD_HTML = """<!doctype html>
     .tele-card { background: rgba(15,23,42,0.6); padding: 10px; border-radius: 10px; text-align: center; }
     .tele-val { font-size: 15px; font-weight: 700; color: var(--primary); margin-top: 4px; }
     .tele-lbl { font-size: 11px; color: var(--text-muted); }
+    /* Timeline Flow */
+    .sched-flow { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; max-height: 120px; overflow-y: auto; }
+    .sched-item { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--card-border); border-radius: 6px; font-size: 12px; transition: all 0.2s; }
+    .sched-item.running { background: rgba(56, 189, 248, 0.12); border-color: var(--primary); box-shadow: 0 0 8px rgba(56, 189, 248, 0.25); }
+    .sched-item.completed { opacity: 0.5; text-decoration: line-through; }
+    .sched-tag { font-size: 10px; padding: 1px 5px; border-radius: 4px; font-weight: 600; }
+    .tag-focus { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+    .tag-break { background: rgba(16, 185, 129, 0.2); color: #34d399; }
   </style>
 </head>
 <body>
@@ -876,6 +1011,7 @@ DASHBOARD_HTML = """<!doctype html>
         <div class="quick-cmd-grid">
           <button class="btn-sm" onclick="triggerQuickAI('pomodoro')">🍅 1分鐘專注</button>
           <button class="btn-sm" onclick="triggerQuickAI('break')">☕ 5分鐘小憩</button>
+          <button class="btn-sm" onclick="triggerQuickAI('schedule_demo')">📅 規劃時程</button>
           <button class="btn-sm" onclick="triggerQuickAI('water')">💧 提醒喝水</button>
           <button class="btn-sm" onclick="triggerQuickAI('heart')">❤️ 撒嬌愛心</button>
           <button class="btn-sm" onclick="triggerQuickAI('status')">🌡️ 硬體狀態</button>
@@ -908,6 +1044,28 @@ DASHBOARD_HTML = """<!doctype html>
             <button class="btn-sm" onclick="startBreak(1)">⚡ 1分小憩</button>
             <button class="btn-sm" style="color:var(--danger)" onclick="stopTimer()">⏹️ 取消</button>
           </div>
+        </div>
+
+        <div class="card-title" style="margin-top: 10px;">
+          <span>📅 專注與休息時程表 (Timeline)</span>
+          <span class="badge" id="sched-badge">0 個階段</span>
+        </div>
+        <div class="sched-flow" id="sched-flow"></div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;">
+          <button class="btn-sm" onclick="startSchedule()">▶️ 開始時程</button>
+          <button class="btn-sm" onclick="nextScheduleBlock()">⏭️ 下一階段</button>
+          <button class="btn-sm" onclick="loadPresetSchedule('demo')">⚡ 測試時程 (1分+1分)</button>
+          <button class="btn-sm" onclick="loadPresetSchedule('classic')">🍅 經典時程 (25分+5分)</button>
+          <button class="btn-sm" style="color:var(--danger)" onclick="clearSchedule()">🗑️ 清空</button>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <select id="sched-add-type" class="todo-input" style="flex:0 0 88px;padding:4px 6px;font-size:12px;">
+            <option value="focus">🍅 專注</option>
+            <option value="break">☕ 小憩</option>
+          </select>
+          <input type="number" id="sched-add-dur" class="todo-input" style="flex:0 0 55px;padding:4px 6px;font-size:12px;" value="25" min="1" max="180">
+          <input type="text" id="sched-add-label" class="todo-input" style="flex:1;padding:4px 8px;font-size:12px;" placeholder="任務 (例: 寫作業)" onkeydown="if(event.key==='Enter') addScheduleBlock()">
+          <button class="btn-sm" style="flex:0 0 50px" onclick="addScheduleBlock()">加入</button>
         </div>
 
         <div class="card-title" style="margin-top: 8px;">
@@ -1032,6 +1190,11 @@ DASHBOARD_HTML = """<!doctype html>
           renderTodos(data.todos);
         }
 
+        // 更新時程表 (Timeline)
+        if (data.schedule) {
+          renderSchedule(data.schedule);
+        }
+
         // 檢查語音回覆音訊播放 (Web 模式) 與對話紀錄同步
         if (data.turns && data.turns.length > 0) {
           if (!initialSyncDone) {
@@ -1154,6 +1317,103 @@ DASHBOARD_HTML = """<!doctype html>
       syncState();
     }
 
+    // 時程表 (Timeline) 前端互動函式
+    function renderSchedule(scheduleData) {
+      if (!scheduleData || !scheduleData.blocks) return;
+      const blocks = scheduleData.blocks;
+      const curIdx = scheduleData.current_index;
+      const badge = document.getElementById('sched-badge');
+      if (badge) badge.textContent = `${blocks.length} 個階段` + (scheduleData.active ? ' (進行中)' : '');
+
+      const flow = document.getElementById('sched-flow');
+      if (!flow) return;
+      if (blocks.length === 0) {
+        flow.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:6px 0;">尚無時程，可在下方新增或對桌寵說：「規劃25分專注5分休息」</div>';
+        return;
+      }
+
+      flow.innerHTML = blocks.map((b, idx) => {
+        const isRun = scheduleData.active && idx === curIdx;
+        const isDone = b.status === 'completed';
+        const tagCls = b.type === 'break' ? 'tag-break' : 'tag-focus';
+        const typeIcon = b.type === 'break' ? '☕ 小憩' : '🍅 專注';
+        const statusText = isRun ? '🟢 進行中' : isDone ? '✅ 已完成' : '⚪ 待執行';
+        return `
+          <div class="sched-item ${isRun ? 'running' : ''} ${isDone ? 'completed' : ''}">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-weight:700;color:var(--text-muted);">${idx + 1}.</span>
+              <span class="sched-tag ${tagCls}">${typeIcon}</span>
+              <span style="font-weight:600;">${b.label}</span>
+              <span style="color:var(--text-muted);font-size:11px;">(${b.duration} 分鐘)</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;">${statusText}</span>
+              ${!isRun ? `<button class="btn-sm" style="padding:2px 6px;font-size:10px;" onclick="startScheduleAt(${idx})">跳至</button>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function addScheduleBlock() {
+      const typeEl = document.getElementById('sched-add-type');
+      const durEl = document.getElementById('sched-add-dur');
+      const labelEl = document.getElementById('sched-add-label');
+      const label = labelEl.value.trim() || (typeEl.value === 'break' ? '護眼小憩' : '專注工作');
+      const dur = parseFloat(durEl.value) || 25;
+      labelEl.value = '';
+      await fetch('/api/schedule/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({type: typeEl.value, duration: dur, label})
+      });
+      syncState();
+    }
+
+    async function startSchedule() {
+      await fetch('/api/schedule/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({index: 0})});
+      syncState();
+    }
+
+    async function startScheduleAt(idx) {
+      await fetch('/api/schedule/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({index: idx})});
+      syncState();
+    }
+
+    async function nextScheduleBlock() {
+      await fetch('/api/schedule/next', {method: 'POST'});
+      syncState();
+    }
+
+    async function clearSchedule() {
+      await fetch('/api/schedule/clear', {method: 'POST'});
+      syncState();
+    }
+
+    async function loadPresetSchedule(mode) {
+      let blocks = [];
+      if (mode === 'demo') {
+        blocks = [
+          {type: 'focus', duration: 1, label: '專案展示錄影'},
+          {type: 'break', duration: 1, label: '咖啡護眼伸展'},
+          {type: 'focus', duration: 1, label: '簡報講稿演練'}
+        ];
+      } else {
+        blocks = [
+          {type: 'focus', duration: 25, label: '第一階段核心專注'},
+          {type: 'break', duration: 5, label: '護眼與喝水小憩'},
+          {type: 'focus', duration: 25, label: '第二階段進度推進'},
+          {type: 'break', duration: 15, label: '充電大休息'}
+        ];
+      }
+      await fetch('/api/schedule/set', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({blocks, auto_start: true})
+      });
+      syncState();
+    }
+
     async function triggerQuickAI(action) {
       if (action === 'pomodoro') {
         appendChat('user', '幫我設定 1 分鐘專注工作番茄鐘');
@@ -1165,6 +1425,11 @@ DASHBOARD_HTML = """<!doctype html>
         appendChat('pet', '主人辛苦了！已為您啟動 5 分鐘護眼小憩 ☕ 記得站起來伸展筋骨、遠眺放鬆喔！');
         await startBreak(5);
         sendChatText('我啟動了5分鐘小憩放鬆，請用可愛桌寵語氣提醒我活動筋骨與護眼遠眺一句話', false);
+      } else if (action === 'schedule_demo') {
+        appendChat('user', '幫我規劃展示時程：1分鐘專注、1分鐘小憩、1分鐘專注');
+        appendChat('pet', '好的！已為主人規劃好 3 階段黃金展示時程表 📅 立即開始執行第一階段！');
+        await loadPresetSchedule('demo');
+        sendChatText('我規劃並啟動了3階段時程表，請用可愛桌寵語氣為我加油打氣一句話', false);
       } else if (action === 'water') {
         appendChat('user', '提醒我喝水休息');
         appendChat('pet', '主人辛苦了！記得喝口溫開水、休息一下喔 💧');

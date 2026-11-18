@@ -173,3 +173,165 @@ class PomodoroTimer:
                 break
 
             time.sleep(1.0)
+
+
+SCHEDULE_FILE = os.path.expanduser("~/pet_schedule.json")
+
+
+class ScheduleManager:
+    """Manages an ordered queue of focus & break blocks (Timeline)."""
+
+    def __init__(
+        self,
+        timer: PomodoroTimer,
+        file_path: str = SCHEDULE_FILE,
+        on_block_advance: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ):
+        self.timer = timer
+        self.file_path = file_path
+        self.on_block_advance = on_block_advance
+        self._lock = threading.Lock()
+        self.blocks: List[Dict[str, Any]] = []
+        self.current_index: int = -1
+        self.active: bool = False
+        self._load()
+
+        orig_on_complete = timer.on_complete
+
+        def _handle_complete(label: str) -> None:
+            if orig_on_complete:
+                try:
+                    orig_on_complete(label)
+                except Exception as e:
+                    logger.error("Error in orig on_complete: %s", e)
+            self._on_timer_completed()
+
+        timer.on_complete = _handle_complete
+
+    def _load(self) -> None:
+        if os.path.exists(self.file_path):
+            try:
+                with open(self.file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.blocks = data.get("blocks", [])
+                    self.current_index = data.get("current_index", -1)
+            except Exception as e:
+                logger.error("Failed to load schedule: %s", e)
+                self.blocks = []
+                self.current_index = -1
+        else:
+            self.blocks = [
+                {"id": 1, "type": "focus", "duration": 25, "label": "專注工作", "status": "pending"},
+                {"id": 2, "type": "break", "duration": 5, "label": "護眼小憩", "status": "pending"},
+                {"id": 3, "type": "focus", "duration": 25, "label": "專注複習", "status": "pending"},
+            ]
+            self.current_index = -1
+
+    def _save(self) -> None:
+        try:
+            with open(self.file_path, "w", encoding="utf-8") as f:
+                json.dump({"blocks": self.blocks, "current_index": self.current_index}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error("Failed to save schedule: %s", e)
+
+    def add_block(self, block_type: str, duration: float, label: str) -> Dict[str, Any]:
+        with self._lock:
+            next_id = max([b.get("id", 0) for b in self.blocks], default=0) + 1
+            block = {
+                "id": next_id,
+                "type": "break" if block_type == "break" else "focus",
+                "duration": float(duration),
+                "label": label.strip() or ("專注工作" if block_type == "focus" else "護眼小憩"),
+                "status": "pending",
+            }
+            self.blocks.append(block)
+            self._save()
+            return block
+
+    def set_blocks(self, blocks_data: List[Dict[str, Any]], auto_start: bool = True) -> List[Dict[str, Any]]:
+        self.stop()
+        with self._lock:
+            self.blocks = []
+            for i, b in enumerate(blocks_data, start=1):
+                self.blocks.append({
+                    "id": i,
+                    "type": "break" if b.get("type") == "break" else "focus",
+                    "duration": float(b.get("duration", 25)),
+                    "label": str(b.get("label", "專注工作")).strip(),
+                    "status": "pending",
+                })
+            self.current_index = -1
+            self._save()
+        if auto_start and self.blocks:
+            self.start_index(0)
+        return list(self.blocks)
+
+    def start_index(self, index: int = 0) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            if not self.blocks or index < 0 or index >= len(self.blocks):
+                return None
+            self.current_index = index
+            for i, b in enumerate(self.blocks):
+                if i < index:
+                    b["status"] = "completed"
+                elif i == index:
+                    b["status"] = "running"
+                else:
+                    b["status"] = "pending"
+            cur = self.blocks[self.current_index]
+            self.active = True
+            self._save()
+
+        if cur["type"] == "break":
+            self.timer.start_break(minutes=cur["duration"], label=cur["label"])
+        else:
+            self.timer.start(minutes=cur["duration"], label=cur["label"], mode="focus")
+
+        if self.on_block_advance:
+            try:
+                self.on_block_advance(cur)
+            except Exception as e:
+                logger.error("Error in on_block_advance: %s", e)
+        return cur
+
+    def next_block(self) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            next_idx = self.current_index + 1
+            if next_idx >= len(self.blocks):
+                self.stop()
+                return None
+        return self.start_index(next_idx)
+
+    def stop(self) -> None:
+        with self._lock:
+            self.active = False
+            self.timer.stop()
+            if 0 <= self.current_index < len(self.blocks):
+                if self.blocks[self.current_index]["status"] == "running":
+                    self.blocks[self.current_index]["status"] = "pending"
+            self._save()
+
+    def clear(self) -> None:
+        self.stop()
+        with self._lock:
+            self.blocks = []
+            self.current_index = -1
+            self._save()
+
+    def _on_timer_completed(self) -> None:
+        with self._lock:
+            if not self.active or self.current_index < 0 or self.current_index >= len(self.blocks):
+                return
+            self.blocks[self.current_index]["status"] = "completed"
+            self._save()
+        self.next_block()
+
+    def get_status(self) -> Dict[str, Any]:
+        with self._lock:
+            cur_block = self.blocks[self.current_index] if 0 <= self.current_index < len(self.blocks) else None
+            return {
+                "active": self.active,
+                "current_index": self.current_index,
+                "current_block": cur_block,
+                "blocks": list(self.blocks),
+            }
