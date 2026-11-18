@@ -731,15 +731,9 @@ DASHBOARD_HTML = """<!doctype html>
     .led.on-3 { background: #00b4d8; box-shadow: 0 0 4px var(--led-glow); }
     .led.on-4 { background: #00e5ff; box-shadow: 0 0 8px var(--led-glow); }
 
-    /* Voice Button */
-    .btn-talk {
-      width: 100%; padding: 22px; font-size: 18px; font-weight: 700; border: none; border-radius: 14px;
-      background: linear-gradient(135deg, #0284c7, #2563eb); color: white; cursor: pointer;
-      display: flex; justify-content: center; align-items: center; gap: 10px;
-      box-shadow: 0 4px 20px var(--primary-glow); transition: all 0.15s ease; user-select: none;
-    }
-    .btn-talk:hover { transform: translateY(-2px); box-shadow: 0 6px 25px var(--primary-glow); }
-    .btn-talk.active { background: linear-gradient(135deg, #e11d48, #be123c); box-shadow: 0 0 30px rgba(225,29,72,0.6); }
+    /* Quick Command Grid */
+    .quick-cmd-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .quick-cmd-grid .btn-sm { padding: 12px 10px; font-size: 13px; text-align: center; }
 
     /* Pomodoro Timer */
     .pomo-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
@@ -796,9 +790,12 @@ DASHBOARD_HTML = """<!doctype html>
         <span class="badge">Arduino UNO Q</span>
         <span class="badge" id="lbl-model">Gemini 3.8 Live</span>
       </div>
-      <div class="status-pill">
-        <div class="dot" id="net-dot"></div>
-        <span id="lbl-phase">待命</span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="btn-sm" id="btn-sound-toggle" style="padding:6px 12px;font-size:12px;" onclick="toggleSound()">🔊 語音: 開啟</button>
+        <div class="status-pill">
+          <div class="dot" id="net-dot"></div>
+          <span id="lbl-phase">待命</span>
+        </div>
       </div>
     </header>
 
@@ -813,30 +810,15 @@ DASHBOARD_HTML = """<!doctype html>
           <div class="matrix-grid" id="matrix-grid"></div>
         </div>
 
-        <!-- 麥克風狀態提示與音量條 -->
-        <div id="mic-status-bar" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">
-            <span id="mic-status-text" style="color:var(--text-muted);font-weight:600;">🎙️ 麥克風未授權</span>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span id="mic-level-val" style="font-size:11px;color:var(--primary);font-family:monospace;">0%</span>
-              <button class="btn-sm" id="btn-request-mic" style="padding:3px 8px;font-size:11px;" onclick="requestMicPermission()">授權麥克風</button>
-            </div>
-          </div>
-          <div style="height:8px;background:#1e293b;border-radius:4px;overflow:hidden;position:relative;">
-            <div id="mic-level-bar" style="height:100%;width:0%;background:linear-gradient(90deg, #10b981, #38bdf8);transition:width 0.05s ease;"></div>
-          </div>
-          <div id="mic-warning-box" style="display:none;background:rgba(245,158,11,0.15);border:1px solid #f59e0b;padding:8px 12px;border-radius:10px;font-size:12px;color:#fde68a;">
-            ⚠️ <b>請改用 localhost 開啟</b>：瀏覽器安全性限制只有 <code>localhost</code> 才能使用麥克風。<br>
-            👉 <a href="http://localhost:7790" style="color:#38bdf8;font-weight:bold;text-decoration:underline;">點我前往 http://localhost:7790</a>
-          </div>
+        <div class="card-title" style="margin-top: 4px;">🐾 AI 智慧互動快捷鍵</div>
+        <div class="quick-cmd-grid">
+          <button class="btn-sm" onclick="sendChatText('幫我設定 1 分鐘專注工作番茄鐘')">🍅 1分鐘專注</button>
+          <button class="btn-sm" onclick="sendChatText('提醒我喝水休息')">💧 提醒喝水</button>
+          <button class="btn-sm" onclick="sendChatText('做一個愛心表情給我看')">❤️ 撒嬌愛心</button>
+          <button class="btn-sm" onclick="sendChatText('現在板載溫度與硬體狀態如何')">🌡️ 硬體狀態</button>
         </div>
 
-        <button class="btn-talk" id="btn-talk" onclick="toggleTalk()">
-          <span id="btn-icon">🎙️</span>
-          <span id="btn-text">點擊說話 (或按住空白鍵)</span>
-        </button>
-
-        <div class="card-title" style="margin-top: 8px;">表情與情緒快速測試</div>
+        <div class="card-title" style="margin-top: 8px;">表情與情緒快速切換</div>
         <div class="mood-grid">
           <button class="btn-sm" onclick="setMood('heart')">❤️ 愛心</button>
           <button class="btn-sm" onclick="setMood('happy')">😄 大笑</button>
@@ -980,9 +962,9 @@ DASHBOARD_HTML = """<!doctype html>
           const lastTurn = data.turns[data.turns.length - 1];
           if (lastTurn.wav_len && lastTurn.wav_len !== lastWavLen) {
             lastWavLen = lastTurn.wav_len;
-            if (data.out_mode === 'web') {
+            if (data.out_mode === 'web' && soundEnabled) {
               const audio = new Audio('/reply.wav?t=' + Date.now());
-              audio.play().catch(e => console.log('Audio autoplay info:', e));
+              audio.play().catch(e => console.log('Audio playback info:', e));
             }
             let petReply = lastTurn.reply;
             if (!petReply && lastTurn.tools && lastTurn.tools.length > 0) {
@@ -1079,11 +1061,17 @@ DASHBOARD_HTML = """<!doctype html>
     async function sendChatText(txt) {
       if (!txt) return;
       appendChat('user', txt);
-      await fetch('/chat', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: txt})
-      });
+      const phaseEl = document.getElementById('lbl-phase');
+      if (phaseEl) phaseEl.textContent = '思考運算中...';
+      try {
+        await fetch('/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({text: txt})
+        });
+      } catch(e) {
+        console.error('Chat error:', e);
+      }
       syncState();
     }
 
@@ -1104,256 +1092,13 @@ DASHBOARD_HTML = """<!doctype html>
       box.scrollTop = box.scrollHeight;
     }
 
-    // 瀏覽器麥克風音訊串流 (WebRTC AudioContext -> 16kHz PCM -> WebSocket)
-    let audioCtx = null, micSock = null, micProcessor = null, micStream = null;
-    let isRecording = false;
-
-    function checkMicSupport() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        const warn = document.getElementById('mic-warning-box');
-        if (warn) warn.style.display = 'block';
-        const txt = document.getElementById('mic-status-text');
-        if (txt) txt.textContent = '⚠️ 請使用 localhost 開啟';
-        const btn = document.getElementById('btn-request-mic');
-        if (btn) btn.style.display = 'none';
-        return false;
-      }
-      return true;
+    // 語音播放開關 (預設開啟)
+    let soundEnabled = true;
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      const btn = document.getElementById('btn-sound-toggle');
+      if (btn) btn.textContent = soundEnabled ? '🔊 語音: 開啟' : '🔇 語音: 靜音';
     }
-    setTimeout(checkMicSupport, 100);
-
-    async function requestMicPermission() {
-      if (!checkMicSupport()) return;
-      try {
-        await initMic();
-        const txt = document.getElementById('mic-status-text');
-        if (txt) {
-          txt.innerHTML = '🟢 麥克風已就緒 (有即時音量)';
-          txt.style.color = 'var(--success)';
-        }
-        const btn = document.getElementById('btn-request-mic');
-        if (btn) btn.style.display = 'none';
-      } catch (err) {
-        const txt = document.getElementById('mic-status-text');
-        if (txt) {
-          txt.textContent = '❌ 授權失敗: ' + (err.name || err.message);
-          txt.style.color = 'var(--danger)';
-        }
-      }
-    }
-
-    async function initMic() {
-      if (micStream && micStream.active && micSock && micSock.readyState === WebSocket.OPEN) {
-        if (audioCtx && audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-        }
-        return;
-      }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("此網址不支援麥克風，請開 http://localhost:7790");
-      }
-      
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      micSock = new WebSocket(`${proto}//${location.host}/mic`);
-      
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true}
-      });
-      
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
-      
-      const source = audioCtx.createMediaStreamSource(micStream);
-      micProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
-      
-      micProcessor.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0);
-        let sum = 0;
-        for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
-        let rms = Math.sqrt(sum / input.length);
-        let lvl = Math.min(100, Math.round(rms * 400));
-        
-        const bar = document.getElementById('mic-level-bar');
-        if (bar) bar.style.width = lvl + '%';
-        const val = document.getElementById('mic-level-val');
-        if (val) val.textContent = lvl > 2 ? (lvl + '% 🔊') : '0%';
-
-        if (!isRecording || !micSock || micSock.readyState !== WebSocket.OPEN) return;
-        const pcm16 = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          let s = Math.max(-1, Math.min(1, input[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        micSock.send(pcm16.buffer);
-      };
-      
-      source.connect(micProcessor);
-      micProcessor.connect(audioCtx.destination);
-      
-      // 等候 WebSocket 就緒
-      if (micSock.readyState !== WebSocket.OPEN) {
-        await new Promise((resolve) => {
-          const t = setTimeout(resolve, 1000);
-          micSock.onopen = () => { clearTimeout(t); resolve(); };
-          micSock.onerror = () => { clearTimeout(t); resolve(); };
-        });
-      }
-    }
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognizer = null;
-    let spokenResult = '';
-    let isConnecting = false;
-
-    function resetTalkButton() {
-      if (isRecording) return;
-      const icon = document.getElementById('btn-icon');
-      const text = document.getElementById('btn-text');
-      if (icon) icon.textContent = '🎙️';
-      if (text) text.textContent = '點擊說話 (或按住空白鍵)';
-      btnTalk.classList.remove('active');
-    }
-
-    async function toggleTalk() {
-      if (isConnecting) return;
-      if (isRecording) {
-        await stopTalk();
-      } else {
-        await startTalk();
-      }
-    }
-
-    async function startTalk() {
-      if (isRecording || isConnecting) return;
-      if (!checkMicSupport()) {
-        alert("瀏覽器安全性限制：非 localhost 網址無法啟用麥克風。\\n👉 請改在網址列開啟 http://localhost:7790 即可！");
-        return;
-      }
-      isConnecting = true;
-      document.getElementById('btn-icon').textContent = '⏳';
-      document.getElementById('btn-text').textContent = '連線準備中...';
-
-      try {
-        await initMic();
-        const txt = document.getElementById('mic-status-text');
-        if (txt) {
-          txt.innerHTML = '🟢 正在即時收音辨識中...';
-          txt.style.color = 'var(--danger)';
-        }
-        const btn = document.getElementById('btn-request-mic');
-        if (btn) btn.style.display = 'none';
-      } catch(e) {
-        isConnecting = false;
-        resetTalkButton();
-        alert("無法啟動麥克風: " + (e.name || e.message) + "\\n請在網址列左側點擊圖示，將麥克風設為『允許』！");
-        return;
-      }
-
-      isRecording = true;
-      isConnecting = false;
-      spokenResult = '';
-      btnTalk.classList.add('active');
-      document.getElementById('btn-icon').textContent = '🔴';
-      document.getElementById('btn-text').textContent = '正在聽您說話... (說完再點我發送)';
-
-      // 啟動瀏覽器原生語音辨識 (繁體中文)
-      if (SpeechRecognition) {
-        try {
-          if (recognizer) {
-            try { recognizer.abort(); } catch(e) {}
-          }
-          recognizer = new SpeechRecognition();
-          recognizer.lang = 'zh-TW';
-          recognizer.interimResults = true;
-          recognizer.continuous = false;
-
-          recognizer.onresult = (e) => {
-            let heard = '';
-            for (let i = 0; i < e.results.length; i++) {
-              heard += e.results[i][0].transcript;
-            }
-            if (heard) {
-              spokenResult = heard;
-              document.getElementById('btn-text').textContent = '🗣️ "' + heard + '"';
-              const chatInput = document.getElementById('chat-input');
-              if (chatInput) chatInput.value = heard;
-            }
-          };
-
-          recognizer.onend = async () => {
-            if (isRecording) {
-              await stopTalk();
-            }
-          };
-
-          recognizer.onerror = (e) => {
-            console.log('SpeechRecognition notice:', e.error);
-          };
-
-          recognizer.start();
-        } catch(e) {
-          console.warn('SpeechRecognition failed:', e);
-        }
-      }
-
-      try {
-        await fetch('/start', {method: 'POST'});
-      } catch(e) {
-        console.error('fetch /start error:', e);
-      }
-    }
-
-    async function stopTalk() {
-      if (!isRecording) return;
-      isRecording = false;
-      btnTalk.classList.remove('active');
-      document.getElementById('btn-icon').textContent = '⏳';
-      document.getElementById('btn-text').textContent = '思考運算回答中...';
-
-      if (recognizer) {
-        try { recognizer.stop(); } catch(e) {}
-      }
-
-      try {
-        const inp = document.getElementById('chat-input');
-        const finalSpoken = (spokenResult || (inp ? inp.value.trim() : '')).trim();
-
-        if (finalSpoken) {
-          if (inp) inp.value = '';
-          await sendChatText(finalSpoken);
-        } else {
-          await fetch('/stop', {method: 'POST'});
-        }
-      } catch(err) {
-        console.error('stopTalk error:', err);
-      } finally {
-        const txt = document.getElementById('mic-status-text');
-        if (txt) {
-          txt.innerHTML = '🟢 麥克風已就緒';
-          txt.style.color = 'var(--success)';
-        }
-        setTimeout(resetTalkButton, 2500);
-      }
-    }
-
-    // 支援空白鍵按住或開關說話
-    let spaceKeyDown = false;
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT') {
-        e.preventDefault();
-        spaceKeyDown = true;
-        startTalk();
-      }
-    });
-    window.addEventListener('keyup', (e) => {
-      if (e.code === 'Space' && spaceKeyDown && document.activeElement.tagName !== 'INPUT') {
-        e.preventDefault();
-        spaceKeyDown = false;
-        stopTalk();
-      }
-    });
   </script>
 </body>
 </html>
