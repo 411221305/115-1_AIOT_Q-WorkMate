@@ -1205,6 +1205,7 @@ DASHBOARD_HTML = """<!doctype html>
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognizer = null;
     let spokenResult = '';
+    let isConnecting = false;
 
     function resetTalkButton() {
       if (isRecording) return;
@@ -1216,6 +1217,7 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     async function toggleTalk() {
+      if (isConnecting) return;
       if (isRecording) {
         await stopTalk();
       } else {
@@ -1224,11 +1226,15 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     async function startTalk() {
-      if (isRecording) return;
+      if (isRecording || isConnecting) return;
       if (!checkMicSupport()) {
         alert("瀏覽器安全性限制：非 localhost 網址無法啟用麥克風。\\n👉 請改在網址列開啟 http://localhost:7790 即可！");
         return;
       }
+      isConnecting = true;
+      document.getElementById('btn-icon').textContent = '⏳';
+      document.getElementById('btn-text').textContent = '連線準備中...';
+
       try {
         await initMic();
         const txt = document.getElementById('mic-status-text');
@@ -1239,10 +1245,14 @@ DASHBOARD_HTML = """<!doctype html>
         const btn = document.getElementById('btn-request-mic');
         if (btn) btn.style.display = 'none';
       } catch(e) {
+        isConnecting = false;
+        resetTalkButton();
         alert("無法啟動麥克風: " + (e.name || e.message) + "\\n請在網址列左側點擊圖示，將麥克風設為『允許』！");
         return;
       }
+
       isRecording = true;
+      isConnecting = false;
       spokenResult = '';
       btnTalk.classList.add('active');
       document.getElementById('btn-icon').textContent = '🔴';
@@ -1279,7 +1289,7 @@ DASHBOARD_HTML = """<!doctype html>
           };
 
           recognizer.onerror = (e) => {
-            console.log('SpeechRecognition info:', e.error);
+            console.log('SpeechRecognition notice:', e.error);
           };
 
           recognizer.start();
@@ -1288,7 +1298,11 @@ DASHBOARD_HTML = """<!doctype html>
         }
       }
 
-      await fetch('/start', {method: 'POST'});
+      try {
+        await fetch('/start', {method: 'POST'});
+      } catch(e) {
+        console.error('fetch /start error:', e);
+      }
     }
 
     async function stopTalk() {
@@ -1302,22 +1316,26 @@ DASHBOARD_HTML = """<!doctype html>
         try { recognizer.stop(); } catch(e) {}
       }
 
-      const inp = document.getElementById('chat-input');
-      const finalSpoken = (spokenResult || (inp ? inp.value.trim() : '')).trim();
+      try {
+        const inp = document.getElementById('chat-input');
+        const finalSpoken = (spokenResult || (inp ? inp.value.trim() : '')).trim();
 
-      if (finalSpoken) {
-        if (inp) inp.value = '';
-        await sendChatText(finalSpoken);
-      } else {
-        await fetch('/stop', {method: 'POST'});
+        if (finalSpoken) {
+          if (inp) inp.value = '';
+          await sendChatText(finalSpoken);
+        } else {
+          await fetch('/stop', {method: 'POST'});
+        }
+      } catch(err) {
+        console.error('stopTalk error:', err);
+      } finally {
+        const txt = document.getElementById('mic-status-text');
+        if (txt) {
+          txt.innerHTML = '🟢 麥克風已就緒';
+          txt.style.color = 'var(--success)';
+        }
+        setTimeout(resetTalkButton, 2500);
       }
-
-      const txt = document.getElementById('mic-status-text');
-      if (txt) {
-        txt.innerHTML = '🟢 麥克風已就緒';
-        txt.style.color = 'var(--success)';
-      }
-      setTimeout(resetTalkButton, 3500);
     }
 
     // 支援空白鍵按住或開關說話
