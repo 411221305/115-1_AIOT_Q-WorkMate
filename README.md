@@ -27,18 +27,19 @@
 - **動態進度格條**：啟動專注計時後，板載 8x13 LED 矩陣會即時顯示時間流逝進度條，RGB 燈切換為熱血專注紅。
 - **主動語音關懷**：專注結束後主動播放溫馨提醒：「主人，專注時間結束囉，起來伸展喝水吧！」，並切換為水杯圖示。
 
-### 3. 📝 語音隨手待辦備忘 (Voice To-Do & Memo)
-- 隨時用語音說：「幫我記一筆：明天中午交期中專題報告」，桌寵會寫入記憶清單並在點陣顯示打勾動畫（✔）。
-- 說：「我今天有什麼待辦事項？」，桌寵會清晰條列念出目前事項。
+### 3. 📝 智慧隨手待辦備忘 (To-Do & Memo Assistant)
+- 隨時在對話欄輸入：「幫我記一筆：明天中午交期中專題報告」，桌寵會即時調用 `add_todo` 工具寫入記憶清單並在板載點陣顯示打勾動畫（✔）。
+- 輸入：「我今天有什麼待辦事項？」，桌寵會清晰條列列出目前事項。
 
 ### 4. 😊 擬人化動態表情與情緒反饋 (Dynamic Emotion Engine)
 - **待命呼吸笑臉**：平時在桌面上每隔數秒自然眨眼微笑。
-- **聆聽與思考狀態**：當你講話時眼睛豎起傾聽；AI 運算時點陣呈現 4 幀旋轉雷達波形。
+- **思考運算狀態**：AI 運算時點陣呈現 4 幀旋轉雷達波形。
 - **情緒互動**：被誇獎或安慰主人時顯示「愛心眼 (♥_♥)」；休息時呈現「Zzz 睡覺呼嚕」動畫。
 
 ### 5. 💻 現代化 Web 雙向互動儀表板 (Web Dashboard)
 - **虛擬點陣螢幕鏡像 (Matrix Mirror)**：網頁上 1:1 實時同步反映 UNO Q 上的實體 8x13 LED 像素。
-- **雙模音訊支援**：可透過 UAC2 USB 音效卡收發音訊，亦可直接使用電腦或手機瀏覽器麥克風。
+- **雙向智慧互動**：支援文字指令對話、快捷 AI 指令卡與單鍵情緒手動測試。
+- **即時語音生成與播放**：Gemini 生成語音回覆，可透過瀏覽器自動朗讀。
 - **即時硬體遙測**：板載 CPU 溫度、可用記憶體、系統運作時長監控卡片。
 
 ---
@@ -48,14 +49,15 @@
 ```mermaid
 flowchart TD
     subgraph User["👤 使用者互動介面"]
-        Mic["🎤 語音輸入 (Web / USB Mic)"]
-        Spk["🔊 語音輸出 (Web / USB Spk)"]
-        WebUI["💻 Web 互動儀表板 (localhost:7790)"]
+        WebPrompt["💬 Web 智慧對話控制台"]
+        WebAction["⚡ 1-Click AI 快捷指令卡"]
+        Spk["🔊 語音語調輸出 (Web Speech Output)"]
+        WebUI["💻 Web 互動儀表板 (192.168.7.2:7790)"]
     end
 
     subgraph MPU["🐧 Qualcomm Dragonwing (Debian 13 Linux)"]
         Agent["Q-Pet 核心服務 (desk_pet_agent.py)"]
-        FastAPI["FastAPI & WebSockets 後端"]
+        FastAPI["FastAPI 輕量非同步後端"]
         Pomo["番茄鐘模組 (PomodoroTimer)"]
         Todo["待辦管理 (TodoManager)"]
         BridgeClient["Bridge RPC 客戶端"]
@@ -71,7 +73,8 @@ flowchart TD
         RGBLED["🌈 板載 RGB 氛圍指示燈"]
     end
 
-    Mic --> FastAPI
+    WebPrompt --> FastAPI
+    WebAction --> FastAPI
     FastAPI --> Agent
     Agent <-->|WebSocket 即時音訊 & 工具調用| Gemini
     Agent --> Spk
