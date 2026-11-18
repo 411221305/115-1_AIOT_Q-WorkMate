@@ -205,6 +205,21 @@ TOOLS = [{"functionDeclarations": [
         }
     },
     {
+        "name": "delete_todo",
+        "description": "刪除指定 ID 編號的備忘錄事項。",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "todo_id": {"type": "INTEGER", "description": "要刪除的備忘事項 ID"}
+            },
+            "required": ["todo_id"]
+        }
+    },
+    {
+        "name": "clear_completed_todos",
+        "description": "一鍵清除所有已經標記完成（打勾）的備忘錄事項。",
+    },
+    {
         "name": "remind_hydration",
         "description": "提醒主人喝水休息、伸展放鬆，點陣螢幕會顯示水杯圖示。",
     },
@@ -316,6 +331,16 @@ def tool_complete_todo(todo_id: int, **kwargs) -> Dict[str, Any]:
     return {"status": "completed" if ok else "not_found", "id": todo_id}
 
 
+def tool_delete_todo(todo_id: int, **kwargs) -> Dict[str, Any]:
+    ok = todos.remove(todo_id)
+    return {"status": "deleted" if ok else "not_found", "id": todo_id}
+
+
+def tool_clear_completed_todos(**kwargs) -> Dict[str, Any]:
+    count = todos.clear_completed()
+    return {"status": "cleared", "count": count}
+
+
 def tool_remind_hydration(**kwargs) -> Dict[str, Any]:
     matrix.set_mood("water", duration=4.0, force=True)
     rgb.set_color("yellow")
@@ -369,6 +394,8 @@ TOOL_FUNCS = {
     "add_todo": tool_add_todo,
     "list_todos": tool_list_todos,
     "complete_todo": tool_complete_todo,
+    "delete_todo": tool_delete_todo,
+    "clear_completed_todos": tool_clear_completed_todos,
     "remind_hydration": tool_remind_hydration,
     "set_pet_mood": tool_set_pet_mood,
 }
@@ -523,6 +550,10 @@ async def rx_loop() -> None:
                             turn["reply"] = f"已為您切換桌寵表情：{args.get('mood')} ✨"
                         elif name == "add_todo":
                             turn["reply"] = f"已為您記錄待辦事項：「{args.get('task')}」📝"
+                        elif name == "delete_todo":
+                            turn["reply"] = f"已為您刪除待辦事項 (ID: {args.get('todo_id')}) 🗑️"
+                        elif name == "clear_completed_todos":
+                            turn["reply"] = "已為您清除所有已完成的備忘事項 🧹"
                         elif name == "list_todos":
                             turn["reply"] = "目前待辦清單已同步更新在右方 📋"
                         elif name == "remind_hydration":
@@ -812,9 +843,24 @@ async def api_add_todo(body: dict):
 async def api_toggle_todo(body: dict):
     todo_id = body.get("id")
     if todo_id:
-        todos.complete(int(todo_id))
+        todos.toggle(int(todo_id))
         matrix.set_mood("check", duration=2.0)
     return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/todo/delete")
+async def api_delete_todo(body: dict):
+    todo_id = body.get("id")
+    if todo_id:
+        todos.remove(int(todo_id))
+        return JSONResponse({"status": "ok", "id": todo_id})
+    return JSONResponse({"error": "Missing id"}, status_code=400)
+
+
+@app.post("/api/todo/clear_completed")
+async def api_clear_completed_todos():
+    count = todos.clear_completed()
+    return JSONResponse({"status": "ok", "count": count})
 
 
 @app.post("/api/timer/start")
@@ -1068,9 +1114,12 @@ DASHBOARD_HTML = """<!doctype html>
           <button class="btn-sm" style="flex:0 0 50px" onclick="addScheduleBlock()">加入</button>
         </div>
 
-        <div class="card-title" style="margin-top: 8px;">
-          <span>📝 語音備忘清單</span>
-          <span class="badge" id="todo-count">0 項</span>
+        <div class="card-title" style="margin-top: 10px;">
+          <span>📝 備忘清單</span>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn-sm" style="padding:2px 8px;font-size:11px;" onclick="clearCompletedTodos()">🧹 清除已完成</button>
+            <span class="badge" id="todo-count">0 項</span>
+          </div>
         </div>
         <div class="todo-input-wrap">
           <input type="text" class="todo-input" id="todo-input" placeholder="輸入待辦事項後按 Enter..." onkeydown="if(event.key==='Enter') addTodo()">
@@ -1252,13 +1301,20 @@ DASHBOARD_HTML = """<!doctype html>
     function renderTodos(items) {
       document.getElementById('todo-count').textContent = items.length + ' 項';
       const list = document.getElementById('todo-list');
+      if (items.length === 0) {
+        list.innerHTML = '<li style="color:var(--text-muted);font-size:12px;padding:8px 0;text-align:center;">目前沒有待辦備忘</li>';
+        return;
+      }
       list.innerHTML = items.map(t => `
         <li class="todo-item ${t.done ? 'done' : ''}">
           <span class="todo-check" onclick="toggleTodo(${t.id})">
             <span>${t.done ? '✅' : '⚪'}</span>
-            <span>${t.text}</span>
+            <span style="${t.done ? 'text-decoration:line-through;color:var(--text-muted);' : ''}">${t.text}</span>
           </span>
-          <span style="font-size:11px;color:var(--text-muted)">${t.time || ''}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:11px;color:var(--text-muted)">${t.time || ''}</span>
+            <button class="btn-sm" style="padding:2px 6px;font-size:10px;color:var(--danger);" onclick="deleteTodo(${t.id})">🗑️</button>
+          </div>
         </li>
       `).join('');
     }
@@ -1282,6 +1338,20 @@ DASHBOARD_HTML = """<!doctype html>
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id})
       });
+      syncState();
+    }
+
+    async function deleteTodo(id) {
+      await fetch('/api/todo/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id})
+      });
+      syncState();
+    }
+
+    async function clearCompletedTodos() {
+      await fetch('/api/todo/clear_completed', {method: 'POST'});
       syncState();
     }
 

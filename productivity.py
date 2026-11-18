@@ -66,6 +66,23 @@ class TodoManager:
                     return True
             return False
 
+    def toggle(self, todo_id: int) -> bool:
+        with self._lock:
+            for item in self.todos:
+                if item.get("id") == todo_id:
+                    item["done"] = not item.get("done", False)
+                    self._save()
+                    return True
+            return False
+
+    def clear_completed(self) -> int:
+        with self._lock:
+            before_len = len(self.todos)
+            self.todos = [t for t in self.todos if not t.get("done", False)]
+            if len(self.todos) != before_len:
+                self._save()
+            return before_len - len(self.todos)
+
     def remove(self, todo_id: int) -> bool:
         with self._lock:
             before_len = len(self.todos)
