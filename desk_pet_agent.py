@@ -456,12 +456,22 @@ async def rx_loop() -> None:
                 logger.info("Turn completed.")
 
     except Exception as e:
-        logger.error("Rx loop error: %s", e)
-        update_pet_state("error")
-        S["msg"] = f"連線異常: {e}"
+        err_str = str(e)
         if ws:
-            await ws.close()
+            try:
+                await ws.close()
+            except Exception:
+                pass
             ws = None
+
+        if "inactivity" in err_str.lower() or "1000" in err_str:
+            logger.info("Session closed due to normal client inactivity. Will reconnect on next interaction.")
+            update_pet_state("idle")
+            S["msg"] = ""
+        else:
+            logger.error("Rx loop error: %s", e)
+            update_pet_state("error")
+            S["msg"] = f"連線異常: {e}"
 
 
 # ---------------------------------------------------------------- FastAPI 路由與應用
@@ -490,13 +500,13 @@ async def start_listening():
     async with ws_lock:
         if rec_active:
             return JSONResponse(S)
-        if ws is None:
+        if ws is None or (hasattr(ws, "closed") and ws.closed):
             try:
                 await connect()
             except Exception as e:
                 logger.error("Failed to connect Gemini in /start: %s", e)
                 S["phase"] = "error"
-                S["msg"] = "Gemini 金鑰無效，請在板上更新 ~/.gemini_key"
+                S["msg"] = "Gemini 連線失敗，請稍候再試"
                 update_pet_state("error")
                 return JSONResponse(S)
         rec_active = True
