@@ -68,13 +68,20 @@ todos = TodoManager()
 
 
 def on_pomodoro_tick(progress: float, remaining: int) -> None:
-    matrix.set_pomodoro_progress(progress)
+    if pomodoro.mode == "break":
+        matrix.set_mood("coffee", duration=0.0)
+    else:
+        matrix.set_pomodoro_progress(progress)
 
 
 def on_pomodoro_complete(label: str) -> None:
-    logger.info("Pomodoro focus session completed!")
-    matrix.set_mood("water", duration=5.0)
-    rgb.set_color("yellow")
+    logger.info("Pomodoro session completed: %s (mode=%s)", label, pomodoro.mode)
+    if pomodoro.mode == "focus":
+        matrix.set_mood("coffee", duration=10.0, force=True)
+        rgb.set_color("yellow")
+    else:
+        matrix.set_mood("happy", duration=6.0, force=True)
+        rgb.set_color("green")
 
 
 pomodoro = PomodoroTimer(on_tick=on_pomodoro_tick, on_complete=on_pomodoro_complete)
@@ -85,10 +92,10 @@ PERSONA = (
     "你的對象是正在用電腦讀書、寫程式或工作的同學。"
     "你性格活潑、親切、熱愛工作陪伴，一律用繁體中文（台灣口語習慣）回答，說話簡短精煉（最多兩到三句）。"
     "你擁有強大的硬體與生產力工具，能主動替主人管理生活與專注：\n"
-    "1. 當同學要求專注工作、讀書或設定番茄鐘時，呼叫 start_focus_timer；要求看剩餘時間呼叫 get_timer_status；取消叫 cancel_timer。\n"
+    "1. 當同學要求專注工作、讀書或設定番茄鐘時，呼叫 start_focus_timer；要求休息、小憩或護眼放鬆時呼叫 start_break_timer；要求看剩餘時間呼叫 get_timer_status；取消叫 cancel_focus_timer。\n"
     "2. 當同學想記事情或待辦清單，呼叫 add_todo；想查今天要做什麼呼叫 list_todos；完成叫 complete_todo。\n"
     "3. 當同學工作很久、喊累或口渴，呼叫 remind_hydration 給予溫馨提醒與關懷。\n"
-    "4. 當同學誇獎你或想看你撒嬌，呼叫 set_pet_mood 變成 heart（愛心）。\n"
+    "4. 當同學誇獎你或想看你撒嬌，呼叫 set_pet_mood 變成 heart（愛心）或 coffee（咖啡）。\n"
     "5. 問到板子溫度、負載或系統狀態，呼叫 get_board_status；問現在時間呼叫 get_time。"
 )
 
@@ -103,6 +110,17 @@ TOOLS = [{"functionDeclarations": [
                 "task_name": {"type": "STRING", "description": "專注的任務名稱，例如『寫作業』或『讀書』"}
             },
             "required": ["minutes"]
+        }
+    },
+    {
+        "name": "start_break_timer",
+        "description": "啟動小憩放鬆計時器（例如 5 分鐘休息或 20-20-20 護眼伸展）。板載點陣會顯示冒煙熱咖啡杯動畫。",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "minutes": {"type": "NUMBER", "description": "休息分鐘數，例如 5 或 1"},
+                "label": {"type": "STRING", "description": "休息項目名稱，例如『放鬆小憩』或『護眼伸展』"}
+            }
         }
     },
     {
@@ -215,13 +233,20 @@ def tool_start_focus_timer(minutes: float = 25.0, task_name: str = "專注工作
     return {"status": "started", "minutes": minutes, "task": task_name}
 
 
+def tool_start_break_timer(minutes: float = 5.0, label: str = "放鬆小憩", **kwargs) -> Dict[str, Any]:
+    pomodoro.start_break(minutes=minutes, label=label)
+    matrix.set_mood("coffee", duration=0.0, force=True)
+    rgb.set_color("cyan")
+    return {"status": "break_started", "minutes": minutes, "label": label}
+
+
 def tool_get_timer_status(**kwargs) -> Dict[str, Any]:
     return pomodoro.get_status()
 
 
 def tool_cancel_focus_timer(**kwargs) -> Dict[str, Any]:
     pomodoro.stop()
-    matrix.set_mood("idle")
+    matrix.set_mood("idle", force=True)
     rgb.set_color("green")
     return {"status": "cancelled"}
 
@@ -258,6 +283,8 @@ def tool_set_pet_mood(mood: str, **kwargs) -> Dict[str, Any]:
         rgb.set_color("off")
     elif mood == "happy":
         rgb.set_color("green")
+    elif mood in ("coffee", "break"):
+        rgb.set_color("cyan")
     return {"status": "success", "mood": mood}
 
 
@@ -265,6 +292,7 @@ TOOL_FUNCS = {
     "get_board_status": tool_get_board_status,
     "get_time": tool_get_time,
     "start_focus_timer": tool_start_focus_timer,
+    "start_break_timer": tool_start_break_timer,
     "get_timer_status": tool_get_timer_status,
     "cancel_focus_timer": tool_cancel_focus_timer,
     "add_todo": tool_add_todo,
@@ -408,6 +436,8 @@ async def rx_loop() -> None:
                         turn["tools"].append({"name": name, "args": args, "result": result})
                         if name == "start_focus_timer":
                             turn["reply"] = f"好的！已為主人設定 {args.get('minutes', 25)} 分鐘專注番茄鐘 🍅"
+                        elif name == "start_break_timer":
+                            turn["reply"] = f"辛苦了主人！已為您開啟 {args.get('minutes', 5)} 分鐘小憩放鬆 ☕ 記得活動筋骨、遠眺放鬆喔！"
                         elif name == "cancel_focus_timer":
                             turn["reply"] = "專注番茄鐘已為您取消 ⏹️"
                         elif name == "set_pet_mood":
@@ -668,6 +698,14 @@ async def api_timer_start(body: dict):
     return JSONResponse(pomodoro.get_status())
 
 
+@app.post("/api/timer/break")
+async def api_timer_break(body: dict):
+    minutes = float(body.get("minutes", 5))
+    label = body.get("label", "放鬆小憩")
+    tool_start_break_timer(minutes, label)
+    return JSONResponse(pomodoro.get_status())
+
+
 @app.post("/api/timer/stop")
 async def api_timer_stop():
     tool_cancel_focus_timer()
@@ -837,6 +875,7 @@ DASHBOARD_HTML = """<!doctype html>
         <div class="card-title" style="margin-top: 4px;">🐾 AI 智慧互動快捷鍵</div>
         <div class="quick-cmd-grid">
           <button class="btn-sm" onclick="triggerQuickAI('pomodoro')">🍅 1分鐘專注</button>
+          <button class="btn-sm" onclick="triggerQuickAI('break')">☕ 5分鐘小憩</button>
           <button class="btn-sm" onclick="triggerQuickAI('water')">💧 提醒喝水</button>
           <button class="btn-sm" onclick="triggerQuickAI('heart')">❤️ 撒嬌愛心</button>
           <button class="btn-sm" onclick="triggerQuickAI('status')">🌡️ 硬體狀態</button>
@@ -847,6 +886,7 @@ DASHBOARD_HTML = """<!doctype html>
           <button class="btn-sm" onclick="setMood('heart')">❤️ 愛心</button>
           <button class="btn-sm" onclick="setMood('happy')">😄 大笑</button>
           <button class="btn-sm" onclick="setMood('water')">💧 喝水</button>
+          <button class="btn-sm" onclick="setMood('coffee')">☕ 咖啡</button>
           <button class="btn-sm" onclick="setMood('sleep')">💤 睡覺</button>
           <button class="btn-sm" onclick="setMood('idle')">😊 微笑</button>
         </div>
@@ -855,17 +895,18 @@ DASHBOARD_HTML = """<!doctype html>
       <!-- 右欄: 番茄鐘 + 待辦事項 -->
       <div class="card">
         <div class="card-title">
-          <span>🍅 專注番茄鐘</span>
+          <span>🍅 專注番茄鐘 & ☕ 護眼小憩</span>
           <span class="badge" id="pomo-status">未啟動</span>
         </div>
         <div class="pomo-wrap">
           <div class="pomo-time" id="pomo-timer">25:00</div>
           <div class="pomo-bar"><div class="pomo-fill" id="pomo-fill"></div></div>
           <div class="pomo-btns">
-            <button class="btn-sm" onclick="startTimer(1)">⚡ 1 分鐘測試</button>
-            <button class="btn-sm" onclick="startTimer(15)">15 分鐘</button>
-            <button class="btn-sm" onclick="startTimer(25)">25 分鐘</button>
-            <button class="btn-sm" style="color:var(--danger)" onclick="stopTimer()">取消</button>
+            <button class="btn-sm" onclick="startTimer(1)">⚡ 1分專注</button>
+            <button class="btn-sm" onclick="startTimer(25)">25分專注</button>
+            <button class="btn-sm" onclick="startBreak(5)">☕ 5分小憩</button>
+            <button class="btn-sm" onclick="startBreak(1)">⚡ 1分小憩</button>
+            <button class="btn-sm" style="color:var(--danger)" onclick="stopTimer()">⏹️ 取消</button>
           </div>
         </div>
 
@@ -957,7 +998,7 @@ DASHBOARD_HTML = """<!doctype html>
           if (data.telemetry.uptime) document.getElementById('tele-uptime').textContent = data.telemetry.uptime;
         }
 
-        // 更新番茄鐘
+        // 更新番茄鐘與小憩
         if (data.pomodoro) {
           const p = data.pomodoro;
           if (p.active) {
@@ -965,11 +1006,24 @@ DASHBOARD_HTML = """<!doctype html>
             const s = p.remaining_seconds % 60;
             document.getElementById('pomo-timer').textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
             document.getElementById('pomo-fill').style.width = (p.progress * 100) + '%';
-            document.getElementById('pomo-status').textContent = '進行中: ' + p.label;
+            if (p.mode === 'break') {
+              document.getElementById('pomo-fill').style.background = 'linear-gradient(90deg, #10b981, #06b6d4)';
+              document.getElementById('pomo-status').textContent = '☕ 小憩中: ' + p.label;
+              document.getElementById('pomo-status').style.background = 'rgba(16, 185, 129, 0.2)';
+              document.getElementById('pomo-status').style.color = '#34d399';
+            } else {
+              document.getElementById('pomo-fill').style.background = 'linear-gradient(90deg, var(--danger), var(--warning))';
+              document.getElementById('pomo-status').textContent = '🍅 專注中: ' + p.label;
+              document.getElementById('pomo-status').style.background = 'rgba(239, 68, 68, 0.2)';
+              document.getElementById('pomo-status').style.color = '#f87171';
+            }
           } else {
             document.getElementById('pomo-timer').textContent = '25:00';
             document.getElementById('pomo-fill').style.width = '0%';
+            document.getElementById('pomo-fill').style.background = 'linear-gradient(90deg, var(--danger), var(--warning))';
             document.getElementById('pomo-status').textContent = '待命中';
+            document.getElementById('pomo-status').style.background = 'rgba(255, 255, 255, 0.08)';
+            document.getElementById('pomo-status').style.color = 'var(--text-muted)';
           }
         }
 
@@ -1077,6 +1131,15 @@ DASHBOARD_HTML = """<!doctype html>
       syncState();
     }
 
+    async function startBreak(min) {
+      await fetch('/api/timer/break', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({minutes: min, label: '護眼小憩'})
+      });
+      syncState();
+    }
+
     async function stopTimer() {
       await fetch('/api/timer/stop', {method: 'POST'});
       syncState();
@@ -1097,6 +1160,11 @@ DASHBOARD_HTML = """<!doctype html>
         appendChat('pet', '好的！已為主人啟動 1 分鐘專注番茄鐘 🍅');
         await startTimer(1);
         sendChatText('我啟動了1分鐘專注工作番茄鐘，請用可愛桌寵語氣為我加油打氣一句話', false);
+      } else if (action === 'break') {
+        appendChat('user', '幫我設定 5 分鐘小憩放鬆');
+        appendChat('pet', '主人辛苦了！已為您啟動 5 分鐘護眼小憩 ☕ 記得站起來伸展筋骨、遠眺放鬆喔！');
+        await startBreak(5);
+        sendChatText('我啟動了5分鐘小憩放鬆，請用可愛桌寵語氣提醒我活動筋骨與護眼遠眺一句話', false);
       } else if (action === 'water') {
         appendChat('user', '提醒我喝水休息');
         appendChat('pet', '主人辛苦了！記得喝口溫開水、休息一下喔 💧');

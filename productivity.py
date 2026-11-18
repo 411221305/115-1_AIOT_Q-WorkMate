@@ -92,6 +92,7 @@ class PomodoroTimer:
         self.on_tick = on_tick          # (progress: 0.0~1.0, remaining_sec: int)
         self.on_complete = on_complete  # (label: str)
         self.active = False
+        self.mode = "focus"             # "focus" or "break"
         self.label = "專注工作"
         self.total_seconds = 0
         self.end_time = 0.0
@@ -99,9 +100,10 @@ class PomodoroTimer:
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
 
-    def start(self, minutes: float = 25.0, label: str = "專注工作") -> None:
+    def start(self, minutes: float = 25.0, label: str = "專注工作", mode: str = "focus") -> None:
         self.stop()
         with self._lock:
+            self.mode = mode
             self.label = label
             self.total_seconds = int(max(10, minutes * 60))
             self.end_time = time.time() + self.total_seconds
@@ -109,7 +111,10 @@ class PomodoroTimer:
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
-            logger.info("Started Pomodoro: %s minutes for '%s'", minutes, label)
+            logger.info("Started Pomodoro [%s]: %s minutes for '%s'", mode, minutes, label)
+
+    def start_break(self, minutes: float = 5.0, label: str = "放鬆小憩") -> None:
+        self.start(minutes=minutes, label=label, mode="break")
 
     def stop(self) -> None:
         with self._lock:
@@ -125,6 +130,7 @@ class PomodoroTimer:
             if not self.active:
                 return {
                     "active": False,
+                    "mode": self.mode,
                     "remaining_seconds": 0,
                     "total_seconds": self.total_seconds,
                     "progress": 0.0,
@@ -135,6 +141,7 @@ class PomodoroTimer:
             progress = max(0.0, min(1.0, elapsed / self.total_seconds if self.total_seconds else 0.0))
             return {
                 "active": True,
+                "mode": self.mode,
                 "remaining_seconds": remaining,
                 "total_seconds": self.total_seconds,
                 "progress": progress,

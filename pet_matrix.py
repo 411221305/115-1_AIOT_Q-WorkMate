@@ -19,6 +19,7 @@ from matrix_frames import (
     FRAME_SLEEP,
     FRAME_SMILE,
     FRAME_WATER,
+    COFFEE_FRAMES,
     SPEAKING_FRAMES,
     THINKING_FRAMES,
     make_pomodoro_frame,
@@ -124,6 +125,7 @@ class PetMatrix:
         is_blinking = False
         think_idx = 0
         speak_idx = 0
+        coffee_idx = 0
 
         while not self._stop_event.is_set():
             now = time.time()
@@ -181,6 +183,11 @@ class PetMatrix:
             elif current_mood == "sleep":
                 self.draw_raw(FRAME_SLEEP)
                 time.sleep(0.3)
+
+            elif current_mood in ("coffee", "break"):
+                self.draw_raw(COFFEE_FRAMES[coffee_idx])
+                coffee_idx = (coffee_idx + 1) % len(COFFEE_FRAMES)
+                time.sleep(0.35)
 
             elif current_mood == "pomodoro":
                 self.draw_raw(make_pomodoro_frame(progress))
