@@ -532,6 +532,33 @@ async def stop_listening():
         return JSONResponse(S)
 
 
+@app.post("/chat")
+async def chat_text(body: dict):
+    global turn
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "Empty text"}, status_code=400)
+    async with ws_lock:
+        if ws is None or (hasattr(ws, "closed") and ws.closed):
+            await connect()
+        update_pet_state("thinking")
+        turn = {
+            "t_start": time.strftime("%H:%M:%S"),
+            "reply": "",
+            "tools": [],
+            "wav_len": 0,
+        }
+        S["turns"].append(turn)
+        msg = {
+            "clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": text}]}],
+                "turnComplete": True,
+            }
+        }
+        await ws.send(json.dumps(msg))
+        return JSONResponse({"status": "sent", "text": text})
+
+
 @app.post("/mode")
 async def set_audio_mode(body: dict):
     for k in ("in_mode", "out_mode"):
@@ -825,9 +852,13 @@ DASHBOARD_HTML = """<!doctype html>
       </div>
 
       <div class="card">
-        <div class="card-title">即時語音對話紀錄</div>
+        <div class="card-title">即時語音與文字對話紀錄</div>
         <div class="chat-box" id="chat-box">
-          <div class="chat-pet">🐾 Q-Pet: 主人你好！我是你的桌面生產力桌寵，隨時可以為你計時或記錄事項喔！</div>
+          <div class="chat-pet">🐾 Q-Pet: 主人你好！我是你的桌面生產力桌寵，你可以按住上方按鈕說話，或直接在下方打字喔！</div>
+        </div>
+        <div class="todo-input-wrap">
+          <input type="text" class="todo-input" id="chat-input" placeholder="打字跟 Q-Pet 說話 (例如: 現在溫度如何、設定1分鐘專注)..." onkeydown="if(event.key==='Enter') sendChat()">
+          <button class="btn-sm" style="flex:0 0 60px" onclick="sendChat()">傳送</button>
         </div>
       </div>
     </div>
@@ -992,6 +1023,20 @@ DASHBOARD_HTML = """<!doctype html>
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({mood: m})
+      });
+      syncState();
+    }
+
+    async function sendChat() {
+      const inp = document.getElementById('chat-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      appendChat('user', txt);
+      await fetch('/chat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text: txt})
       });
       syncState();
     }
