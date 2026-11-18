@@ -85,7 +85,15 @@ def on_pomodoro_complete(label: str) -> None:
 
 
 pomodoro = PomodoroTimer(on_tick=on_pomodoro_tick, on_complete=on_pomodoro_complete)
-schedule = ScheduleManager(timer=pomodoro)
+
+
+def on_schedule_all_complete() -> None:
+    logger.info("Schedule completed all blocks! Setting pet to celebratory happy state.")
+    matrix.set_mood("happy", duration=8.0, force=True)
+    rgb.set_color("green")
+
+
+schedule = ScheduleManager(timer=pomodoro, on_schedule_complete=on_schedule_all_complete)
 
 # ---------------------------------------------------------------- Gemini 工具定義與實作
 PERSONA = (

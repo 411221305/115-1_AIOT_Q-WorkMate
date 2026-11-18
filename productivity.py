@@ -18,7 +18,7 @@ class TodoManager:
 
     def __init__(self, file_path: str = TODO_FILE):
         self.file_path = file_path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.todos: List[Dict[str, Any]] = []
         self._load()
 
@@ -203,11 +203,13 @@ class ScheduleManager:
         timer: PomodoroTimer,
         file_path: str = SCHEDULE_FILE,
         on_block_advance: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_schedule_complete: Optional[Callable[[], None]] = None,
     ):
         self.timer = timer
         self.file_path = file_path
         self.on_block_advance = on_block_advance
-        self._lock = threading.Lock()
+        self.on_schedule_complete = on_schedule_complete
+        self._lock = threading.RLock()
         self.blocks: List[Dict[str, Any]] = []
         self.current_index: int = -1
         self.active: bool = False
@@ -315,18 +317,35 @@ class ScheduleManager:
         with self._lock:
             next_idx = self.current_index + 1
             if next_idx >= len(self.blocks):
-                self.stop()
-                return None
+                if 0 <= self.current_index < len(self.blocks):
+                    self.blocks[self.current_index]["status"] = "completed"
+                self.active = False
+                self.current_index = -1
+                self._save()
+                should_finish = True
+            else:
+                should_finish = False
+
+        if should_finish:
+            self.timer.stop()
+            logger.info("Schedule completed all blocks.")
+            if self.on_schedule_complete:
+                try:
+                    self.on_schedule_complete()
+                except Exception as e:
+                    logger.error("Error in on_schedule_complete: %s", e)
+            return None
+
         return self.start_index(next_idx)
 
     def stop(self) -> None:
         with self._lock:
             self.active = False
-            self.timer.stop()
             if 0 <= self.current_index < len(self.blocks):
                 if self.blocks[self.current_index]["status"] == "running":
                     self.blocks[self.current_index]["status"] = "pending"
             self._save()
+        self.timer.stop()
 
     def clear(self) -> None:
         self.stop()
