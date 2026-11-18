@@ -1,85 +1,102 @@
-# AIoT 期中專題簡報大綱 (Slides Outline)
-專題題目：**Q-WorkMate / LumiPet：基於 Arduino UNO Q 雙核邊緣運算與 Gemini Live 之 AI 智慧生產力桌寵**
+# 🐾 AIoT 期中專題簡報大綱 (Presentation Slides Outline)
+
+**專題題目**：Q-WorkMate / LumiPet：基於 Arduino UNO Q 雙核邊緣運算與 Gemini Live 之 AI 智慧生產力桌寵  
+**投影片檔案**：[AIoT_Midterm_Q-WorkMate.pptx](file:///f:/Antigravity/AIoT_midterm_project/AIoT_Midterm_Q-WorkMate.pptx)  
+**開源專案網址**：https://github.com/411221305/115-1_AIOT_Q-WorkMate  
 
 ---
 
-## 投影片頁數規劃（建議 8 ~ 10 頁，簡明扼要、結構完整）
+## 投影片頁數結構 (共 9 頁，16:9 專業科技暗色調)
 
-### 【第 1 頁：封面 (Title)】
-- **專案名稱**：Q-WorkMate / LumiPet
+### 📌 第 1 頁：封面 (Title & Overview)
+- **專案名稱**：`Q-WorkMate / LumiPet`
 - **副標題**：基於 Arduino UNO Q 雙核心架構與 Gemini Live 之 AI 智慧生產力桌寵
-- **核心技術標籤**：Arduino UNO Q · Qualcomm Dragonwing · STM32U585 · Zephyr RTOS · Gemini Live · Bridge RPC · FastAPI
+- **核心技術**：Arduino UNO Q · Qualcomm Dragonwing ARM64 · STM32U585 MCU · Zephyr RTOS · Gemini 3.8 Live API · FastAPI
+- **去識別化確認**：嚴格無學生姓名與學號，附上公開 GitHub 倉庫連結。
 
 ---
 
-### 【第 2 頁：動機與背景 (Motivation & Problem)】
-- **痛點現況**：
-  - 現有的智慧語音助理（如 Siri, Alexa）多為純語音或冷冰冰的螢幕介面，缺乏實體桌面伴隨感。
-  - 傳統桌面番茄鐘或小夜燈功能單一、缺乏互動與自然語言理解。
-  - 現代學生與遠距工作者長時間面對電腦，容易因缺乏定時專注與休息提醒而產生疲倦感。
-- **我們的想法**：
-  - 打造一隻**住在硬體裡的實體 AI 伴侶**，既具備陪伴情緒價值，又是一個稱職的「專注番茄鐘」與「語音隨手筆記管家」。
+### 📌 第 2 頁：動機與問題痛點 (Motivation & Problem)
+- **現有產品痛點**：
+  - 現有語音助理（Siri / Alexa）多為無螢幕或冷冰冰音響，缺乏實體桌面的情緒陪伴感。
+  - 傳統桌面番茄鐘功能孤立、無自然語言溝通能力，無法動態調整時程。
+  - 長時間遠距伏案工作容易缺乏規律休息提醒，導致久坐疲勞與用眼過度。
+- **Q-WorkMate 的創新解方**：
+  - 打造「住在晶片裡的實體 AI 伴侶」，8x13 點陣表情賦予生命感。
+  - 結合多階段時程表，兼具「專注番茄鐘」與「護眼小憩管家」。
+  - 善用 UNO Q 純板載硬體（LED 點陣、RGB 氛圍燈、熱感測器），無需外接零件即可達成極高完成度。
 
 ---
 
-### 【第 3 頁：系統硬體架構 (Hardware Architecture)】
-- **使用平台**：Arduino UNO Q 旗艦開發板
-- **雙核心異質架構優勢**：
-  1. **MPU 應用處理端**：Qualcomm Dragonwing QRB2210 (Quad-core Cortex-A53 @ Debian 13 Linux)，負責高階網路串流、Docker 容器與 Gemini 多模態語音處理。
-  2. **MCU 即時控制端**：STMicroelectronics STM32U585 (Cortex-M33 @ Zephyr RTOS)，負責 8x13 LED 矩陣的微秒級即時掃描更新。
-  3. **板載人機介面**：8x13 藍色 LED 點陣（繪製動態表情與計時進度條）+ 板載 RGB LED（提供心情光影氛圍）。
+### 📌 第 3 頁：雙核心異質硬體架構 (Dual-Brain Hardware Architecture)
+- **Linux 應用運算層 (High-Level Intelligence)**：
+  - Qualcomm Dragonwing QRB2210 (4x ARM Cortex-A53 @ Debian 13 Linux)。
+  - 負責 Docker 容器化 Agent、FastAPI 伺服器、WebSocket 直連 Gemini 3.8 Live。
+- **STM32 即時控制層 (Real-Time Control)**：
+  - STMicroelectronics STM32U585 (ARM Cortex-M33 @ Zephyr RTOS)。
+  - 透過 `Arduino_RouterBridge` RPC 響應 `draw` 指令，微秒級精準驅動 8x13 LED 矩陣。
+- **板載人機互動模組 (Peripherals)**：
+  - 8x13 藍色 LED 點陣（104 顆獨立亮度 LED，0~7 階灰階）。
+  - 板載 RGB 氛圍指示燈（專注紅、小憩青藍、完成綠、思考藍）。
 
 ---
 
-### 【第 4 頁：軟體與通訊架構 (Software & Communication)】
-- **三大核心通訊閉環**：
-  1. **雲端大腦 (Cloud Intelligence)**：
-     - 使用 Google Gemini Live WebSocket 協議（`BidiGenerateContent`），達成低延遲雙向即時對話。
-     - 整合自訂 Function Calling 工具集（番茄鐘、待辦事項、狀態感知）。
-  2. **邊緣運算與後台 (Edge Backend)**：
-     - FastAPI + WebSocket 構建輕量後台。
-     - 雙模音訊管線（支援 UAC2 USB 音效卡與 WebRTC 瀏覽器麥克風）。
-  3. **跨晶片橋接 (Bridge RPC)**：
-     - 利用 `Arduino_RouterBridge` 透過 Unix Domain Socket (`/var/run/arduino-router.sock`) 呼叫 MCU 端的 `draw` 介面，將 Python 像素幀轉譯為硬體顯示。
+### 📌 第 4 頁：軟體與雲端通訊架構 (Software & Cloud AI)
+- **Gemini 3.8 Live 雙向即時串流**：
+  - 使用 `BidiGenerateContent` WebSocket 協議，低延遲雙向即時對話。
+  - 繁體中文情感人設（活潑親切的專屬桌寵 Persona）。
+  - Function Calling 工具庫：`start_focus_timer`、`start_break_timer`、`set_schedule`、`add_todo`、`get_board_status`。
+- **跨行程 Bridge RPC 橋接管道**：
+  - 容器透過 `/var/run/arduino-router.sock` 通訊。
+  - MsgPack 二進制協議封裝：將 104 點陣像素轉化為 `bytes(frame)` 二進制型別，對齊 C++ `std::vector<uint8_t>`。
+  - 表情保護機制（`_temp_mood_until`）：解決語音 `speaking` 覆蓋特殊表情動畫的並行衝突。
 
 ---
 
-### 【第 5 頁：核心功能展示 (Core Features)】
-- **1. 擬人化動態表情系統**：
-  - 待命眨眼、專注傾聽、雷達旋轉思考、說話音波、愛心讚許、打哈欠睡覺。
-- **2. 智慧番茄鐘專注助手**：
-  - 語音自訂分鐘數；點陣動態顯現 26 階進度格條；倒數結束自動觸發喝水休息語音。
-- **3. 語音隨手待辦備忘錄**：
-  - 說一句話即可新增待辦；隨時查詢未完成任務；網頁看板即時同步劃掉。
-- **4. 硬體遙測與溫度感知**：
-  - AI 隨時讀取核心晶片熱感測器 (`/sys/class/thermal`)，關心板子也關心主人。
+### 📌 第 5 頁：核心功能一：時程表與番茄鐘 (Focus & Break Timeline)
+- **專注番茄鐘與 5 分鐘小憩**：
+  - 26 格即時動態進度格條。
+  - 獨家雙幀「熱氣蒸騰冒煙熱咖啡杯（☕）」動畫。
+  - 20-20-20 護眼伸展指引，專注紅燈與小憩青藍呼吸燈沉浸式切換。
+- **自然語言時程表排程 (Timeline Queue)**：
+  - 口語化輸入：「先專注寫作業 25 分鐘，再休息 5 分鐘，接著專注 25 分鐘」，AI 自動拆解多階段時程。
+  - 第一階段倒數完畢後，系統自動無縫銜接至第二階段並切換表情與燈效。
+  - 支援「⚡ 測試時程 (1分+1分)」方便錄影演示，亦支援手動追加與隨時暫停。
 
 ---
 
-### 【第 6 頁：Web 互動儀表板 (Interactive Dashboard)】
-- **視覺化三大模組**：
-  - **虛擬點陣螢幕鏡像 (Matrix Mirror)**：網頁上 1:1 實時還原 UNO Q 實體 LED 矩陣亮度與動畫。
-  - **生產力控制中心**：一鍵啟動 15/25/45 分鐘番茄鐘、即時待辦事項新增與勾選。
-  - **即時遙測儀表**：CPU 溫度、可用記憶體、系統運行時間即時監看。
+### 📌 第 6 頁：核心功能二：情緒引擎與備忘清單 (Emotions & Memo)
+- **8x13 擬人化動態表情引擎**：
+  - 待命呼吸笑臉（每 3.5 秒自動眨眼）、雷達旋轉思考波形、心跳撒嬌愛心、定時喝水提醒、睡眠呼嚕 (Zzz)。
+- **智慧備忘清單與任務管理**：
+  - 隨手新增備忘，任務完成時點陣播放立體打勾（✔）動畫！
+  - 每一筆事項具備獨立 `🗑️` 刪除按鈕，標題列提供 `🧹 清除已完成` 一鍵整理。
+  - JSON 檔案本地持久化於板載 eMMC，重啟後不遺失。
 
 ---
 
-### 【第 7 頁：技術難點與解決方案 (Challenges & Solutions)】
-- **難點 1：跨晶片 Bridge RPC 參數型別適配**
-  - *問題*：Python 端傳送一般 list 時，MsgPack 轉發型別不匹配 (`RpcError: Wrong type parameter`)。
-  - *解法*：將 Python 數組打包為 `bytes(frame)` 二進制型別，成功契合 C++ `std::vector<uint8_t>`。
-- **難點 2：雙模音訊適配與無外接音效卡相容**
-  - *解法*：架構內建 WebRTC AudioContext 擷取機制，讓電腦即使未設定 USB 聆聽裝置也能透過瀏覽器流暢對話。
-- **難點 3：非同步動畫與語音對話不衝突**
-  - *解法*：將點陣動畫引擎獨立為守護執行緒 (`threading.Thread`)，與 FastAPI/Gemini WebSocket 異步迴圈解耦，保持極致順暢。
+### 📌 第 7 頁：Web 現代化雙向互動儀表板 (Interactive Dashboard)
+- **1:1 虛擬點陣螢幕鏡像 (Matrix Mirror)**：瀏覽器即時同步 UNO Q 實體 LED 矩陣每一幀。
+- **AI 智慧快捷指令卡**：一鍵觸發 1分鐘專注、5分鐘小憩、規劃時程、喝水提醒、撒嬌愛心、硬體狀態。
+- **即時全雙工對話框**：文字輸入與桌寵回答氣泡紀錄，支援語音播放與一鍵靜音切換。
+- **板載硬體即時遙測**：CPU 溫度 (℃)、可用記憶體 (MB)、運行時間與負載平均值。
 
 ---
 
-### 【第 8 頁：成果總結與未來展望 (Summary & Future Work)】
-- **成果總結**：
-  - 100% 達成自主定義之專題目標。
-  - 善用 UNO Q 雙核軟硬體潛能，不需額外感測器即呈現最高水準的軟硬整合。
-  - 符合無金鑰、無學號姓名之資安標準。
+### 📌 第 8 頁：關鍵技術挑戰與解決方案 (Technical Challenges)
+1. **跨晶片 Bridge RPC 型別不相容**：改採 `bytes(frame)` 成功適配 Zephyr C++ `std::vector<uint8_t>`。
+2. **多線程動畫與語音講話狀態衝突**：設計 `_temp_mood_until` 時間保護鎖，避免語音串流瞬間覆蓋表情。
+3. **純文字輸入與 Gemini Live 協議適配**：後端封裝 `clientContent` 封包，並在工具執行後合成精準中文回覆。
+4. **極致硬體壓榨**：完全不依賴外接額外零件，純利用板載資源達到軟硬整合頂級水準。
+
+---
+
+### 📌 第 9 頁：成果總結與未來展望 (Summary & Roadmap)
+- **專題成果總結**：
+  - 100% 達成專案指標，打造具備生命力與生產力閉環的 AI 桌面伴侶。
+  - 融合異質雙核心 (Linux + RTOS)、RPC 橋接、Gemini 3.8 Live、Docker 與 FastAPI。
+  - 嚴格遵守資安與開源標準，程式碼已同步至 GitHub。
 - **未來展望**：
-  - 接入 USB 視訊鏡頭實現臉部追蹤與視線對焦。
-  - 結合 BLE 廣播，將番茄鐘進度推播至智慧手錶或手機 App。
+  - 接入 USB 鏡頭達成視線與坐姿追蹤。
+  - 結合 BLE 廣播推播至智慧手錶。
+  - 透過 Qwiic 介面外接環境溫濕度與 CO2 感測器。
