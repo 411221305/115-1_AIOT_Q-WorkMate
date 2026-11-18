@@ -975,17 +975,28 @@ DASHBOARD_HTML = """<!doctype html>
           renderTodos(data.todos);
         }
 
-        // 檢查語音回覆音訊播放 (Web 模式)
+        // 檢查語音回覆音訊播放 (Web 模式) 與對話紀錄
         if (data.turns && data.turns.length > 0) {
           const lastTurn = data.turns[data.turns.length - 1];
           if (lastTurn.wav_len && lastTurn.wav_len !== lastWavLen) {
             lastWavLen = lastTurn.wav_len;
             if (data.out_mode === 'web') {
               const audio = new Audio('/reply.wav?t=' + Date.now());
-              audio.play().catch(()=>{});
+              audio.play().catch(e => console.log('Audio autoplay info:', e));
             }
-            if (lastTurn.reply) {
-              appendChat('pet', lastTurn.reply);
+            let petReply = lastTurn.reply;
+            if (!petReply && lastTurn.tools && lastTurn.tools.length > 0) {
+              const t = lastTurn.tools[0];
+              if (t.name === 'start_focus_timer') petReply = '好的！已為您啟動 ' + (t.args.minutes || 25) + ' 分鐘專注番茄鐘 🍅';
+              else if (t.name === 'cancel_focus_timer') petReply = '已為您取消專注番茄鐘 ⏹️';
+              else if (t.name === 'set_pet_mood') petReply = '已為您切換桌寵表情：' + t.args.mood + ' ✨';
+              else if (t.name === 'add_todo') petReply = '已為您記錄待辦事項：' + t.args.task + ' 📝';
+              else if (t.name === 'remind_hydration') petReply = '主人辛苦了，記得喝杯水休息一下喔 💧';
+              else if (t.name === 'get_board_status') petReply = '目前硬體運作正常，CPU 溫度約 ' + (data.telemetry?.cpu_temperature || '正常');
+              else petReply = '收到指令，已執行：' + t.name;
+            }
+            if (petReply) {
+              appendChat('pet', petReply);
             }
           }
         }
@@ -1065,11 +1076,8 @@ DASHBOARD_HTML = """<!doctype html>
       syncState();
     }
 
-    async function sendChat() {
-      const inp = document.getElementById('chat-input');
-      const txt = inp.value.trim();
+    async function sendChatText(txt) {
       if (!txt) return;
-      inp.value = '';
       appendChat('user', txt);
       await fetch('/chat', {
         method: 'POST',
@@ -1077,6 +1085,14 @@ DASHBOARD_HTML = """<!doctype html>
         body: JSON.stringify({text: txt})
       });
       syncState();
+    }
+
+    async function sendChat() {
+      const inp = document.getElementById('chat-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      await sendChatText(txt);
     }
 
     function appendChat(role, text) {
@@ -1186,8 +1202,19 @@ DASHBOARD_HTML = """<!doctype html>
       }
     }
 
-    const btnTalk = document.getElementById('btn-talk');
-    
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognizer = null;
+    let spokenResult = '';
+
+    function resetTalkButton() {
+      if (isRecording) return;
+      const icon = document.getElementById('btn-icon');
+      const text = document.getElementById('btn-text');
+      if (icon) icon.textContent = '🎙️';
+      if (text) text.textContent = '點擊說話 (或按住空白鍵)';
+      btnTalk.classList.remove('active');
+    }
+
     async function toggleTalk() {
       if (isRecording) {
         await stopTalk();
@@ -1206,7 +1233,7 @@ DASHBOARD_HTML = """<!doctype html>
         await initMic();
         const txt = document.getElementById('mic-status-text');
         if (txt) {
-          txt.innerHTML = '🟢 正在錄音傳送中...';
+          txt.innerHTML = '🟢 正在即時收音辨識中...';
           txt.style.color = 'var(--danger)';
         }
         const btn = document.getElementById('btn-request-mic');
@@ -1216,9 +1243,51 @@ DASHBOARD_HTML = """<!doctype html>
         return;
       }
       isRecording = true;
+      spokenResult = '';
       btnTalk.classList.add('active');
       document.getElementById('btn-icon').textContent = '🔴';
-      document.getElementById('btn-text').textContent = '錄音中... 說完請再點我一下發送';
+      document.getElementById('btn-text').textContent = '正在聽您說話... (說完再點我發送)';
+
+      // 啟動瀏覽器原生語音辨識 (繁體中文)
+      if (SpeechRecognition) {
+        try {
+          if (recognizer) {
+            try { recognizer.abort(); } catch(e) {}
+          }
+          recognizer = new SpeechRecognition();
+          recognizer.lang = 'zh-TW';
+          recognizer.interimResults = true;
+          recognizer.continuous = false;
+
+          recognizer.onresult = (e) => {
+            let heard = '';
+            for (let i = 0; i < e.results.length; i++) {
+              heard += e.results[i][0].transcript;
+            }
+            if (heard) {
+              spokenResult = heard;
+              document.getElementById('btn-text').textContent = '🗣️ "' + heard + '"';
+              const chatInput = document.getElementById('chat-input');
+              if (chatInput) chatInput.value = heard;
+            }
+          };
+
+          recognizer.onend = async () => {
+            if (isRecording) {
+              await stopTalk();
+            }
+          };
+
+          recognizer.onerror = (e) => {
+            console.log('SpeechRecognition info:', e.error);
+          };
+
+          recognizer.start();
+        } catch(e) {
+          console.warn('SpeechRecognition failed:', e);
+        }
+      }
+
       await fetch('/start', {method: 'POST'});
     }
 
@@ -1228,18 +1297,27 @@ DASHBOARD_HTML = """<!doctype html>
       btnTalk.classList.remove('active');
       document.getElementById('btn-icon').textContent = '⏳';
       document.getElementById('btn-text').textContent = '思考運算回答中...';
+
+      if (recognizer) {
+        try { recognizer.stop(); } catch(e) {}
+      }
+
+      const inp = document.getElementById('chat-input');
+      const finalSpoken = (spokenResult || (inp ? inp.value.trim() : '')).trim();
+
+      if (finalSpoken) {
+        if (inp) inp.value = '';
+        await sendChatText(finalSpoken);
+      } else {
+        await fetch('/stop', {method: 'POST'});
+      }
+
       const txt = document.getElementById('mic-status-text');
       if (txt) {
         txt.innerHTML = '🟢 麥克風已就緒';
         txt.style.color = 'var(--success)';
       }
-      await fetch('/stop', {method: 'POST'});
-      setTimeout(() => {
-        if (!isRecording) {
-          document.getElementById('btn-icon').textContent = '🎙️';
-          document.getElementById('btn-text').textContent = '點擊說話 (或按住空白鍵)';
-        }
-      }, 3000);
+      setTimeout(resetTalkButton, 3500);
     }
 
     // 支援空白鍵按住或開關說話
