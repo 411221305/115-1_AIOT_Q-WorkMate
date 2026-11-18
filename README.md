@@ -137,17 +137,16 @@ arduino-app-cli app start user:smile-matrix
 read -s -p "請貼上 Gemini API Key: " K; printf %s "$K" > ~/.gemini_key; chmod 600 ~/.gemini_key; echo
 ```
 
-### 4. 一鍵啟動 Q-WorkMate 桌寵
-在板上的專案目錄下執行：
-```bash
-bash run_pet.sh
-```
+### 4. Windows 一鍵快速啟動 (One-Click Launch)
+在 Windows 電腦上，您可以直接雙擊專案目錄下的執行檔：
+- 🚀 **`Q-WorkMate.exe`**：自動檢查板子連線、啟動板端 AI 服務、開啟 Windows 代理，並自動彈出瀏覽器儀表板！當您按下 `Q` 或 `Enter` 鍵時，還會自動熄滅板載 LED 矩陣並優雅關閉。
+- ⚡ 亦可使用 **`start_q_workmate.bat`** 啟動，或 **`stop_q_workmate.bat`** 停止。
 
 ### 5. 開啟 Web 控制台
 在電腦瀏覽器輸入：
 👉 **`http://localhost:7790`**
-- 按住畫面中央的「按住說話」按鈕（或直接按住電腦空白鍵）即可開始與桌寵對話！
-- 也可直接在儀表板點選番茄鐘測試、新增待辦事項或切換表情。
+- 點擊「🐾 AI 智慧互動快捷鍵」或直接在下方對話框打字與桌寵互動。
+- 也可在時程表一鍵載入「⚡ 測試時程 (1分+1分)」或新增自訂備忘事項。
 
 ---
 
