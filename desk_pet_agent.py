@@ -496,7 +496,8 @@ app = FastAPI(lifespan=lifespan)
 
 @app.post("/start")
 async def start_listening():
-    global turn, rec_active
+    global turn, rec_active, audio_chunk_count
+    audio_chunk_count = 0
     async with ws_lock:
         if rec_active:
             return JSONResponse(S)
@@ -511,6 +512,7 @@ async def start_listening():
                 return JSONResponse(S)
         rec_active = True
         update_pet_state("listening")
+        logger.info("Started recording turn from browser mic.")
         turn = {
             "t_start": time.strftime("%H:%M:%S"),
             "reply": "",
@@ -529,6 +531,13 @@ async def stop_listening():
             return JSONResponse(S)
         rec_active = False
         update_pet_state("thinking")
+        logger.info("Stopped recording. Sent %d audio chunks to Gemini.", audio_chunk_count)
+        if ws and not getattr(ws, "closed", True):
+            try:
+                await ws.send(json.dumps({"clientContent": {"turnComplete": True}}))
+                logger.info("Sent turnComplete to Gemini Live.")
+            except Exception as e:
+                logger.warning("Error sending turnComplete in /stop: %s", e)
         return JSONResponse(S)
 
 
@@ -567,17 +576,25 @@ async def set_audio_mode(body: dict):
     return JSONResponse(S)
 
 
+audio_chunk_count = 0
+
+
 @app.websocket("/mic")
 async def mic_stream(sock: WebSocket):
+    global audio_chunk_count
     await sock.accept()
+    logger.info("Microphone WebSocket connected from browser client.")
     try:
         while True:
             chunk = await sock.receive_bytes()
             if rec_active and S["in_mode"] == "web":
+                audio_chunk_count += 1
+                if audio_chunk_count % 30 == 1:
+                    logger.info("Streaming mic chunk #%d (%d bytes) to Gemini...", audio_chunk_count, len(chunk))
                 level_of(chunk)
                 await send_audio(chunk)
     except WebSocketDisconnect:
-        pass
+        logger.info("Microphone WebSocket disconnected.")
 
 
 @app.get("/matrix")
@@ -799,11 +816,14 @@ DASHBOARD_HTML = """<!doctype html>
         <!-- 麥克風狀態提示與音量條 -->
         <div id="mic-status-bar" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;">
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">
-            <span id="mic-status-text" style="color:var(--text-muted);">🎙️ 麥克風未授權</span>
-            <button class="btn-sm" id="btn-request-mic" style="flex:0 0 auto;padding:4px 10px;font-size:11px;" onclick="requestMicPermission()">授權麥克風</button>
+            <span id="mic-status-text" style="color:var(--text-muted);font-weight:600;">🎙️ 麥克風未授權</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="mic-level-val" style="font-size:11px;color:var(--primary);font-family:monospace;">0%</span>
+              <button class="btn-sm" id="btn-request-mic" style="padding:3px 8px;font-size:11px;" onclick="requestMicPermission()">授權麥克風</button>
+            </div>
           </div>
-          <div style="height:6px;background:#1e293b;border-radius:3px;overflow:hidden;">
-            <div id="mic-level-bar" style="height:100%;width:0%;background:var(--success);transition:width 0.05s ease;"></div>
+          <div style="height:8px;background:#1e293b;border-radius:4px;overflow:hidden;position:relative;">
+            <div id="mic-level-bar" style="height:100%;width:0%;background:linear-gradient(90deg, #10b981, #38bdf8);transition:width 0.05s ease;"></div>
           </div>
           <div id="mic-warning-box" style="display:none;background:rgba(245,158,11,0.15);border:1px solid #f59e0b;padding:8px 12px;border-radius:10px;font-size:12px;color:#fde68a;">
             ⚠️ <b>請改用 localhost 開啟</b>：瀏覽器安全性限制只有 <code>localhost</code> 才能使用麥克風。<br>
@@ -811,9 +831,9 @@ DASHBOARD_HTML = """<!doctype html>
           </div>
         </div>
 
-        <button class="btn-talk" id="btn-talk">
+        <button class="btn-talk" id="btn-talk" onclick="toggleTalk()">
           <span id="btn-icon">🎙️</span>
-          <span id="btn-text">按住說話 (或按住空白鍵)</span>
+          <span id="btn-text">點擊說話 (或按住空白鍵)</span>
         </button>
 
         <div class="card-title" style="margin-top: 8px;">表情與情緒快速測試</div>
@@ -1092,7 +1112,7 @@ DASHBOARD_HTML = """<!doctype html>
         await initMic();
         const txt = document.getElementById('mic-status-text');
         if (txt) {
-          txt.innerHTML = '🟢 麥克風已就緒 (有音量反應)';
+          txt.innerHTML = '🟢 麥克風已就緒 (有即時音量)';
           txt.style.color = 'var(--success)';
         }
         const btn = document.getElementById('btn-request-mic');
@@ -1107,14 +1127,28 @@ DASHBOARD_HTML = """<!doctype html>
     }
 
     async function initMic() {
-      if (micStream && micStream.active && micSock && micSock.readyState === WebSocket.OPEN) return;
+      if (micStream && micStream.active && micSock && micSock.readyState === WebSocket.OPEN) {
+        if (audioCtx && audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        return;
+      }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("此網址不支援麥克風，請開 http://localhost:7790");
       }
+      
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       micSock = new WebSocket(`${proto}//${location.host}/mic`);
-      micStream = await navigator.mediaDevices.getUserMedia({audio: {sampleRate: 16000, channelCount: 1, echoCancellation: true}});
-      audioCtx = new AudioContext({sampleRate: 16000});
+      
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true}
+      });
+      
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+      
       const source = audioCtx.createMediaStreamSource(micStream);
       micProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
       
@@ -1123,9 +1157,12 @@ DASHBOARD_HTML = """<!doctype html>
         let sum = 0;
         for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
         let rms = Math.sqrt(sum / input.length);
-        let lvl = Math.min(100, Math.round(rms * 350));
+        let lvl = Math.min(100, Math.round(rms * 400));
+        
         const bar = document.getElementById('mic-level-bar');
         if (bar) bar.style.width = lvl + '%';
+        const val = document.getElementById('mic-level-val');
+        if (val) val.textContent = lvl > 2 ? (lvl + '% 🔊') : '0%';
 
         if (!isRecording || !micSock || micSock.readyState !== WebSocket.OPEN) return;
         const pcm16 = new Int16Array(input.length);
@@ -1135,11 +1172,30 @@ DASHBOARD_HTML = """<!doctype html>
         }
         micSock.send(pcm16.buffer);
       };
+      
       source.connect(micProcessor);
       micProcessor.connect(audioCtx.destination);
+      
+      // 等候 WebSocket 就緒
+      if (micSock.readyState !== WebSocket.OPEN) {
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, 1000);
+          micSock.onopen = () => { clearTimeout(t); resolve(); };
+          micSock.onerror = () => { clearTimeout(t); resolve(); };
+        });
+      }
     }
 
     const btnTalk = document.getElementById('btn-talk');
+    
+    async function toggleTalk() {
+      if (isRecording) {
+        await stopTalk();
+      } else {
+        await startTalk();
+      }
+    }
+
     async function startTalk() {
       if (isRecording) return;
       if (!checkMicSupport()) {
@@ -1150,8 +1206,8 @@ DASHBOARD_HTML = """<!doctype html>
         await initMic();
         const txt = document.getElementById('mic-status-text');
         if (txt) {
-          txt.innerHTML = '🟢 麥克風已就緒';
-          txt.style.color = 'var(--success)';
+          txt.innerHTML = '🟢 正在錄音傳送中...';
+          txt.style.color = 'var(--danger)';
         }
         const btn = document.getElementById('btn-request-mic');
         if (btn) btn.style.display = 'none';
@@ -1161,7 +1217,8 @@ DASHBOARD_HTML = """<!doctype html>
       }
       isRecording = true;
       btnTalk.classList.add('active');
-      document.getElementById('btn-text').textContent = '正在聆聽中... (放開按鈕回答)';
+      document.getElementById('btn-icon').textContent = '🔴';
+      document.getElementById('btn-text').textContent = '錄音中... 說完請再點我一下發送';
       await fetch('/start', {method: 'POST'});
     }
 
@@ -1169,26 +1226,35 @@ DASHBOARD_HTML = """<!doctype html>
       if (!isRecording) return;
       isRecording = false;
       btnTalk.classList.remove('active');
-      document.getElementById('btn-text').textContent = '按住說話 (或按住空白鍵)';
+      document.getElementById('btn-icon').textContent = '⏳';
+      document.getElementById('btn-text').textContent = '思考運算回答中...';
+      const txt = document.getElementById('mic-status-text');
+      if (txt) {
+        txt.innerHTML = '🟢 麥克風已就緒';
+        txt.style.color = 'var(--success)';
+      }
       await fetch('/stop', {method: 'POST'});
+      setTimeout(() => {
+        if (!isRecording) {
+          document.getElementById('btn-icon').textContent = '🎙️';
+          document.getElementById('btn-text').textContent = '點擊說話 (或按住空白鍵)';
+        }
+      }, 3000);
     }
 
-    btnTalk.addEventListener('mousedown', startTalk);
-    btnTalk.addEventListener('mouseup', stopTalk);
-    btnTalk.addEventListener('mouseleave', stopTalk);
-    btnTalk.addEventListener('touchstart', (e)=>{ e.preventDefault(); startTalk(); });
-    btnTalk.addEventListener('touchend', (e)=>{ e.preventDefault(); stopTalk(); });
-
-    // 空白鍵快捷鍵
+    // 支援空白鍵按住或開關說話
+    let spaceKeyDown = false;
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space' && !e.repeat && document.activeElement.tagName !== 'INPUT') {
         e.preventDefault();
+        spaceKeyDown = true;
         startTalk();
       }
     });
     window.addEventListener('keyup', (e) => {
-      if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') {
+      if (e.code === 'Space' && spaceKeyDown && document.activeElement.tagName !== 'INPUT') {
         e.preventDefault();
+        spaceKeyDown = false;
         stopTalk();
       }
     });
