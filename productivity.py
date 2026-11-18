@@ -97,11 +97,11 @@ class PomodoroTimer:
         self.end_time = 0.0
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def start(self, minutes: float = 25.0, label: str = "專注工作") -> None:
+        self.stop()
         with self._lock:
-            self.stop()
             self.label = label
             self.total_seconds = int(max(10, minutes * 60))
             self.end_time = time.time() + self.total_seconds
@@ -116,8 +116,8 @@ class PomodoroTimer:
             if self.active:
                 self._stop_event.set()
                 self.active = False
-                if self._thread and self._thread.is_alive():
-                    self._thread.join(timeout=1.0)
+                if self._thread and self._thread.is_alive() and self._thread != threading.current_thread():
+                    self._thread.join(timeout=0.5)
                 logger.info("Stopped Pomodoro timer.")
 
     def get_status(self) -> Dict[str, Any]:
