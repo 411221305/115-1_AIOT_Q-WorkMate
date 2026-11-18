@@ -12,3 +12,6 @@ Thumbs.db
 *api_key*
 *.txt
 proxy_7790.py
+
+~$*.pptx
+*.tmp
