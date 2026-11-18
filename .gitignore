@@ -1,0 +1,10 @@
+# Git ignore for AIoT Midterm Project
+.gemini_key
+*.key
+__pycache__/
+*.pyc
+.cache/
+*.log
+.venv/
+.DS_Store
+Thumbs.db
