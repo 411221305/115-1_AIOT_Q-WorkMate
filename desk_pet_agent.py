@@ -491,7 +491,14 @@ async def start_listening():
         if rec_active:
             return JSONResponse(S)
         if ws is None:
-            await connect()
+            try:
+                await connect()
+            except Exception as e:
+                logger.error("Failed to connect Gemini in /start: %s", e)
+                S["phase"] = "error"
+                S["msg"] = "Gemini 金鑰無效，請在板上更新 ~/.gemini_key"
+                update_pet_state("error")
+                return JSONResponse(S)
         rec_active = True
         update_pet_state("listening")
         turn = {
@@ -548,6 +555,7 @@ async def get_state():
     out["pomodoro"] = pomodoro.get_status()
     out["todos"] = todos.list_all()
     out["mood"] = matrix.mood
+    out["telemetry"] = tool_get_board_status()
     return JSONResponse(out)
 
 
@@ -830,6 +838,7 @@ DASHBOARD_HTML = """<!doctype html>
     async function syncState() {
       try {
         const res = await fetch('/state');
+        if (!res.ok) return;
         const data = await res.json();
         
         // 更新點陣像素
@@ -841,10 +850,33 @@ DASHBOARD_HTML = """<!doctype html>
           }
         }
 
-        // 更新狀態文字
-        document.getElementById('lbl-phase').textContent = data.phase === 'listening' ? '正在傾聽...' : data.phase === 'thinking' ? '思考運算中...' : data.phase === 'speaking' ? '正在回答' : '待命';
+        // 更新狀態文字與燈號
+        const phaseEl = document.getElementById('lbl-phase');
+        const dotEl = document.getElementById('net-dot');
+        if (data.phase === 'error') {
+          phaseEl.textContent = '⚠️ ' + (data.msg || '連線錯誤 (請檢查金鑰)');
+          dotEl.style.background = 'var(--danger)';
+          dotEl.style.boxShadow = '0 0 10px var(--danger)';
+          if (isRecording) {
+            isRecording = false;
+            btnTalk.classList.remove('active');
+            document.getElementById('btn-text').textContent = '按住說話 (或按住空白鍵)';
+          }
+        } else {
+          phaseEl.textContent = data.phase === 'listening' ? '正在傾聽...' : data.phase === 'thinking' ? '思考運算中...' : data.phase === 'speaking' ? '正在回答' : '待命';
+          dotEl.style.background = 'var(--success)';
+          dotEl.style.boxShadow = '0 0 10px var(--success)';
+        }
+
         document.getElementById('lbl-mood').textContent = data.mood || 'idle';
         document.getElementById('lbl-model').textContent = data.model || 'Gemini Live';
+
+        // 更新遙測數值
+        if (data.telemetry) {
+          if (data.telemetry.cpu_temperature) document.getElementById('tele-temp').textContent = data.telemetry.cpu_temperature;
+          if (data.telemetry.memory_available) document.getElementById('tele-mem').textContent = data.telemetry.memory_available;
+          if (data.telemetry.uptime) document.getElementById('tele-uptime').textContent = data.telemetry.uptime;
+        }
 
         // 更新番茄鐘
         if (data.pomodoro) {
@@ -883,7 +915,7 @@ DASHBOARD_HTML = """<!doctype html>
         }
       } catch (err) {}
     }
-    setInterval(syncState, 250);
+    setInterval(syncState, 500);
 
     // 遙測輪詢
     async function syncTelemetry() {
